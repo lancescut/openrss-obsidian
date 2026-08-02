@@ -1,0 +1,9 @@
+{
+  "id": "openrss-library",
+  "name": "OpenRSS Library",
+  "version": "1.2.0",
+  "minAppVersion": "1.11.4",
+  "description": "Browse OpenRSS notes and translations without copying content into your vault.",
+  "author": "OpenRSS",
+  "isDesktopOnly": false
+}

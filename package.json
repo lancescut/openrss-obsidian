@@ -1,0 +1,17 @@
+{
+  "name": "openrss-library",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "node esbuild.config.mjs",
+    "verify": "node tests/policy-check.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.13.1",
+    "typescript": "^5.9.3"
+  }
+}
