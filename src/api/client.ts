@@ -1,4 +1,4 @@
-import { App, RequestUrlParam, requestUrl } from 'obsidian'
+import { App, RequestUrlParam, RequestUrlResponse, requestUrl } from 'obsidian'
 
 import type {
   Capabilities,
@@ -11,6 +11,7 @@ import type {
   TranslationListPage,
 } from './types'
 import { normalizeBaseUrl } from './url'
+import { nonJsonResponseMessage } from './response'
 
 export { normalizeBaseUrl } from './url'
 
@@ -127,7 +128,7 @@ export class OpenRssClient {
     query?: Record<string, string | number | null | undefined>,
   ): Promise<T> {
     const response = await this.request(path, query)
-    const envelope = response.json as Envelope<T>
+    const envelope = this.envelope<T>(response)
     if (!envelope?.ok) {
       throw new OpenRssApiError(envelope?.error?.message || `HTTP ${response.status}`, response.status)
     }
@@ -143,7 +144,7 @@ export class OpenRssClient {
     if (response.status === 304) {
       return { notModified: true, data: null, etag: returnedEtag || etag || null }
     }
-    const envelope = response.json as Envelope<T>
+    const envelope = this.envelope<T>(response)
     if (!envelope?.ok) {
       throw new OpenRssApiError(envelope?.error?.message || `HTTP ${response.status}`, response.status)
     }
@@ -167,13 +168,28 @@ export class OpenRssClient {
     }
     const response = await requestUrl(params)
     if (response.status !== 304 && (response.status < 200 || response.status >= 300)) {
-      const envelope = response.json as Envelope<unknown> | undefined
+      const envelope = this.envelope<unknown>(response)
       throw new OpenRssApiError(
         envelope?.error?.message || `OpenRSS 请求失败（HTTP ${response.status}）`,
         response.status,
       )
     }
     return response
+  }
+
+  private envelope<T>(response: RequestUrlResponse): Envelope<T> {
+    try {
+      return response.json as Envelope<T>
+    } catch {
+      throw new OpenRssApiError(
+        nonJsonResponseMessage(
+          response.status,
+          this.header(response.headers, 'content-type'),
+          response.text,
+        ),
+        response.status,
+      )
+    }
   }
 
   private header(headers: Record<string, string>, name: string): string | null {

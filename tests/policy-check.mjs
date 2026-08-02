@@ -86,6 +86,12 @@ const { normalizeBaseUrl } = await importTypeScript(resolve(src, 'api', 'url.ts'
 if (normalizeBaseUrl('http://127.0.0.1:8787/') !== 'http://127.0.0.1:8787') {
   throw new Error('Loopback URL normalization failed')
 }
+
+const { nonJsonResponseMessage } = await importTypeScript(resolve(src, 'api', 'response.ts'))
+const htmlResponseMessage = nonJsonResponseMessage(200, 'text/html; charset=utf-8', '<!doctype html>')
+if (!htmlResponseMessage.includes('非 JSON') || !htmlResponseMessage.includes('当前响应看起来是网页')) {
+  throw new Error('Non-JSON response guidance failed')
+}
 if (normalizeBaseUrl('https://rss.example.com/') !== 'https://rss.example.com') {
   throw new Error('HTTPS URL normalization failed')
 }
