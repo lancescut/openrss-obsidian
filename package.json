@@ -1,6 +1,6 @@
 {
   "name": "openrss-library",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,5 +13,8 @@
     "esbuild": "^0.28.1",
     "obsidian": "^1.13.1",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "mermaid": "^11.15.0"
   }
 }

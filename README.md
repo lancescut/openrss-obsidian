@@ -1,59 +1,59 @@
 # OpenRSS Library for Obsidian
 
-OpenRSS Library 是一个只读 Obsidian 插件，用于直接浏览自己的 OpenRSS 笔记、摘要翻译、全文翻译和段落对照。内容按需从 OpenRSS 读取，不会复制成 Vault 内的 Markdown、YAML、附件或数据库副本。
+在 Obsidian 内直接浏览 OpenRSS 数据库中的笔记、摘要翻译、全文翻译和段落对照，不把这些内容复制成 Vault 文件。
 
-## 安装（推荐 BRAT）
+## 安装
 
 要求 Obsidian 1.11.4 或更高版本。
 
-1. 在 Obsidian 的第三方插件市场安装并启用 **BRAT**。
-2. 在 BRAT 设置中选择 **Add Beta plugin**。
-3. 输入 `https://github.com/lancescut/openrss-obsidian`。
-4. 选择最新版本并完成安装。
-5. 回到“设置 → 第三方插件”，启用 **OpenRSS Library**。
+1. 将发布目录 `openrss-library` 整个复制到 Vault 的 `.obsidian/plugins/` 下。
+2. 在 Obsidian → 设置 → 第三方插件中启用 **OpenRSS Library**。
+3. 在 OpenRSS → 设置 → **Obsidian 访问**中创建一个 Token，并立即复制；建议同时启用“资料状态同步”。
+4. 在 Obsidian → OpenRSS Library 设置中填写 OpenRSS 地址。
+5. 在“Token”处创建/选择 SecretStorage 密钥并粘贴 Token。
+6. 点击左侧 RSS 图标，或从命令面板执行“OpenRSS Library: 打开资料库”。
 
-也可以从本仓库的 Releases 下载 `main.js`、`manifest.json` 和 `styles.css`，放入 Vault 的 `.obsidian/plugins/openrss-library/` 目录后重启 Obsidian。
+本机地址通常是 `http://127.0.0.1:8787`。如果 OpenRSS 在其他设备上，必须使用 HTTPS 地址。
 
-## 连接 OpenRSS
+### 通过 Tailscale 在手机/平板使用
 
-1. 在 OpenRSS 中创建只读的 Obsidian 访问凭据。
-2. 在插件设置中填写自己的 OpenRSS 地址。本机通常使用 `http://127.0.0.1:8787`；其他设备必须使用可信的 HTTPS 地址。
-3. 在 Obsidian SecretStorage 中新建密钥并粘贴只读凭据。
-4. 点击“测试连接”，成功后点击左侧 RSS 图标打开资料库。
+OpenRSS 主机和移动设备必须登录同一个 tailnet。主机使用 Tailscale Serve 把只监听本机的 OpenRSS 端口发布成 tailnet 内部 HTTPS；不要使用会公开到互联网的 Funnel。
 
-凭据只保存在用户自己的 Obsidian SecretStorage 中。本仓库和 GitHub Releases 不包含用户地址、Token、密钥、密码、OpenRSS 内容或 `data.json`。
+手机端填写该主机由 Tailscale Serve 提供的 `https://<设备名>.<tailnet>.ts.net[:端口]` 地址。Token 值不会随 Vault 配置同步；每台移动设备都要在 SecretStorage 中新建或选择密钥并粘贴 Token，然后执行“测试连接”。OpenRSS 主机和 Tailscale 必须保持在线。
 
-## 阅读功能
+如果使用 Obsidian Sync，在桌面和移动端分别开启“Active community plugin list”和“Installed community plugin list”，等待插件与设置下载后强制退出并重新打开 Obsidian。SecretStorage 仍需在手机端单独配置。
 
-- 顶部资料类型、搜索、筛选和刷新控件保持在同一行。
+如果没有 Obsidian Sync，也可以手工把本插件发布目录复制到移动 Vault 的 `.obsidian/plugins/` 下。安装包不应包含 `data.json` 或 Token；请在手机 SecretStorage 中单独配置 Token。
+
+## 阅读界面
+
+- 顶部的资料类型、搜索、筛选和刷新控件压缩在同一行；窗口较窄时可横向滑动该行。
 - 笔记和翻译都可按订阅筛选；翻译按对应文章所属订阅匹配，多订阅文章不会重复显示。
-- Mermaid 图表由插件调用 Obsidian 内置引擎渲染并清理 SVG，不再依赖自定义 View 中无法完成的 Vault“允许”按钮。
+- Mermaid 图表由插件自带的 Mermaid 引擎渲染并清理 SVG，不再触发 Vault 的“允许”按钮。
 - 手机端列表改为左侧抽屉：首次打开时展开，选择资料后自动收起；点击固定的“列表”按钮可随时展开或隐藏，让正文占满阅读区域。
-- 桌面端继续使用左右分栏，可拖动列表分隔条，将左侧列表缩窄到接近隐藏。
-- 桌面右键或移动端长按列表项，可标记或取消“当前阅读”。
-- 保存阅读模式和标准化进度；再次打开时可选择返回上次位置。
-- 使用“上一篇 / 下一篇”按钮翻页；桌面端支持 `K` / `J`。
-- 可调整正文字号、行距和最大宽度。
+- 桌面端可拖动列表与正文之间的分隔条，列表最窄可缩到 28px；宽度会保存在本插件的 `data.json` 中。
+- 列表项右键/长按以及正文顶部按钮都可设置收藏、稍后读、阅读状态和标签；这些状态由 OpenRSS 服务端统一保存。
+- 正文顶部显示阅读进度；离开一篇资料后会把模式和标准化位置同步到 OpenRSS，再次打开时可点击“返回上次位置”，不会强制跳转。
+- 使用“上一篇/下一篇”按钮翻页；桌面键盘可按 `K` / `J`，输入框聚焦时不会触发。
+- 在插件设置的“阅读外观”中可调整正文字号、行距和最大宽度，笔记、译文与段落对照立即生效。
 
-## 数据与安全边界
+## 单一数据源保证
 
-- 笔记、翻译和附件的唯一持久化正文仍位于用户自己的 OpenRSS。
-- 插件不调用 Vault 写入 API，不创建内容文件或附件副本。
-- 正文详情只保留在当前 Obsidian 进程的有界内存缓存中，关闭视图或卸载插件时清理。
-- 图片使用进程内 Blob URL，切换或关闭时撤销。
-- 插件本地状态只包含连接地址、SecretStorage 密钥名称、布局、排版、资源 ID 标记和最多 500 条阅读位置元数据。
-- 插件不使用 `localStorage`、IndexedDB、Node 文件系统或遥测。
-- 当前版本只读，不会生成、重生成、编辑或删除 OpenRSS 数据。
+- 笔记、翻译和附件的唯一持久化正文仍位于 OpenRSS 数据库/资料目录。
+- 插件不调用 Vault 写入 API，不创建 `.md`、YAML、JSON sidecar 或附件副本。
+- 正文详情最多在内存中保留 10 篇或 20 MiB，View 关闭或插件卸载时清空。
+- 图片只以进程内 Blob URL 显示，并在切换/关闭时撤销。
+- `data.json` 只保存 OpenRSS 地址、SecretStorage 密钥名称、列表宽度、三项排版数值及一次性旧状态迁移元数据；收藏、稍后读、阅读状态、标签和阅读位置均以 OpenRSS 服务端为准。Token 值由 Obsidian SecretStorage 管理。
+- 插件不会使用 `localStorage`、IndexedDB、Node 文件系统或遥测。
 
-OpenRSS 内容通过插件自定义 View 显示，不属于 Vault 文件，因此不会进入 File Explorer、Graph、Backlinks、Quick Switcher、Dataview/Bases 或 Obsidian 原生全文搜索。
+因此重启 Obsidian 且断网后不能继续阅读此前内容。这是“没有第二份持久化资料”的预期表现。
 
-## 开发与验证
+## 能力边界
 
-```bash
-npm install
-npm run check
-npm run build
-npm run verify
-```
+这些资料由插件自定义 View 显示，并不是 Vault 文件，所以不会出现在 File Explorer、Graph、Backlinks、Quick Switcher、Dataview/Bases 或 Obsidian 原生全文搜索中。插件提供自己的服务端搜索、筛选和双语阅读界面。
 
-构建产物为仓库根目录的 `main.js`。发布版本还包含 `manifest.json` 和 `styles.css`。
+当前版本不会生成、重生成或编辑 OpenRSS 正文；在 Token 授权后，只写入收藏、稍后读、阅读状态、标签和阅读位置。
+
+## 开发和发布
+
+运行 `npm run check && npm run build && npm run verify` 可完成类型检查、构建和安全策略检查。

@@ -1,12 +1,14 @@
 import { Plugin } from 'obsidian'
 
-import { OpenRssClient, type ConnectionSettings } from './api/client'
+import { OpenRssApiError, OpenRssClient, type ConnectionSettings } from './api/client'
+import type { LibraryReadingPosition, LibraryResourceState } from './api/types'
 import { OpenRssSettingTab } from './settings'
 import {
+  CURRENT_STATE_MIGRATION_VERSION,
   DEFAULT_PLUGIN_DATA,
   normalizeReadingAppearance,
-  normalizeReadingPosition,
   normalizeStoredPluginData,
+  type FailedLegacyState,
   type ReadingAppearance,
   type ReadingMarkerKey,
   type ReadingPosition,
@@ -21,12 +23,24 @@ const DEFAULT_SETTINGS: ConnectionSettings = {
   secretName: DEFAULT_PLUGIN_DATA.secretName,
 }
 
+export type ServerReadingPosition = {
+  resourceId: number
+  mode: ReadingViewMode
+  contentRevision: string | null
+  progress: number
+  revision: number
+  updatedAt: number
+}
+
 
 export default class OpenRssLibraryPlugin extends Plugin {
   settings: ConnectionSettings = { ...DEFAULT_SETTINGS }
-  private readingMarkers = new Set<ReadingMarkerKey>()
+  private legacyReadingMarkers = new Set<ReadingMarkerKey>()
+  private legacyReadingPositions: ReadingPosition[] = []
+  private stateMigrationVersion = 0
+  private failedLegacyState: FailedLegacyState[] = []
   private listPaneWidth: number | null = null
-  private readingPositions = new Map<string, ReadingPosition>()
+  private serverReadingPositions = new Map<string, ServerReadingPosition>()
   private readingAppearance: ReadingAppearance = { ...DEFAULT_PLUGIN_DATA.readingAppearance }
   private saveQueue: Promise<void> = Promise.resolve()
 
@@ -36,12 +50,11 @@ export default class OpenRssLibraryPlugin extends Plugin {
       baseUrl: stored.baseUrl,
       secretName: stored.secretName,
     }
-    this.readingMarkers = new Set(stored.readingMarkers)
+    this.legacyReadingMarkers = new Set(stored.readingMarkers)
+    this.legacyReadingPositions = stored.readingPositions
+    this.stateMigrationVersion = stored.stateMigrationVersion
+    this.failedLegacyState = stored.failedLegacyState
     this.listPaneWidth = stored.listPaneWidth
-    this.readingPositions = new Map(stored.readingPositions.map((position) => [
-      this.readingPositionContext(position.key, position.mode),
-      position,
-    ]))
     this.readingAppearance = stored.readingAppearance
 
     this.registerView(
@@ -72,23 +85,6 @@ export default class OpenRssLibraryPlugin extends Plugin {
     await this.persistPluginData()
   }
 
-  isReadingMarked(key: ReadingMarkerKey): boolean {
-    return this.readingMarkers.has(key)
-  }
-
-  async setReadingMarked(key: ReadingMarkerKey, marked: boolean): Promise<void> {
-    const previous = this.readingMarkers.has(key)
-    if (marked) this.readingMarkers.add(key)
-    else this.readingMarkers.delete(key)
-    try {
-      await this.persistPluginData()
-    } catch (error) {
-      if (previous) this.readingMarkers.add(key)
-      else this.readingMarkers.delete(key)
-      throw error
-    }
-  }
-
   getListPaneWidth(): number | null {
     return this.listPaneWidth
   }
@@ -104,33 +100,107 @@ export default class OpenRssLibraryPlugin extends Plugin {
     }
   }
 
-  getReadingPosition(key: ReadingMarkerKey, mode: ReadingViewMode): ReadingPosition | null {
-    return this.readingPositions.get(this.readingPositionContext(key, mode)) || null
+  hydrateResourceState(resourceId: number, state: LibraryResourceState | null): void {
+    if (!state?.positions) return
+    for (const position of state.positions) {
+      if (!this.isReadingViewMode(position.view_mode)) continue
+      const value: ServerReadingPosition = {
+        resourceId,
+        mode: position.view_mode,
+        contentRevision: position.content_revision,
+        progress: Math.min(1, Math.max(0, position.progress)),
+        revision: position.revision,
+        updatedAt: position.updated_at ? Date.parse(position.updated_at) : 0,
+      }
+      this.serverReadingPositions.set(this.serverPositionContext(resourceId, value.mode), value)
+    }
   }
 
-  getLatestReadingPosition(key: ReadingMarkerKey): ReadingPosition | null {
-    let latest: ReadingPosition | null = null
-    for (const position of this.readingPositions.values()) {
-      if (position.key !== key) continue
+  getReadingPosition(resourceId: number, mode: ReadingViewMode): ServerReadingPosition | null {
+    return this.serverReadingPositions.get(this.serverPositionContext(resourceId, mode)) || null
+  }
+
+  getLatestReadingPosition(resourceId: number): ServerReadingPosition | null {
+    let latest: ServerReadingPosition | null = null
+    for (const position of this.serverReadingPositions.values()) {
+      if (position.resourceId !== resourceId) continue
       if (!latest || position.updatedAt > latest.updatedAt) latest = position
     }
     return latest
   }
 
-  async setReadingPosition(position: ReadingPosition): Promise<void> {
-    const normalized = normalizeReadingPosition(position)
-    if (!normalized) throw new Error('阅读位置无效')
-    const context = this.readingPositionContext(normalized.key, normalized.mode)
-    const previous = this.readingPositions.get(context)
-    this.readingPositions.set(context, normalized)
-    this.trimReadingPositions()
+  async setReadingPosition(position: Omit<ServerReadingPosition, 'revision' | 'updatedAt'>): Promise<void> {
+    const context = this.serverPositionContext(position.resourceId, position.mode)
+    const previous = this.serverReadingPositions.get(context)
+    let saved: LibraryReadingPosition
     try {
-      await this.persistPluginData()
+      saved = await this.createClient().setPosition(position.resourceId, position.mode, {
+        progress: Math.min(1, Math.max(0, position.progress)),
+        content_revision: position.contentRevision,
+        expected_revision: previous?.revision ?? 0,
+      })
     } catch (error) {
-      if (previous) this.readingPositions.set(context, previous)
-      else this.readingPositions.delete(context)
+      if (error instanceof OpenRssApiError && error.status === 409) {
+        const current = error.detail?.current
+        if (current && typeof current === 'object') {
+          const value = current as Record<string, unknown>
+          if (
+            typeof value.progress === 'number'
+            && typeof value.revision === 'number'
+          ) {
+            this.serverReadingPositions.set(context, {
+              resourceId: position.resourceId,
+              mode: position.mode,
+              contentRevision: typeof value.content_revision === 'string'
+                ? value.content_revision
+                : null,
+              progress: value.progress,
+              revision: value.revision,
+              updatedAt: typeof value.updated_at === 'string'
+                ? Date.parse(value.updated_at)
+                : Date.now(),
+            })
+          }
+        }
+        throw new Error('另一台设备已更新阅读位置；已保留服务器上的较新位置')
+      }
       throw error
     }
+    this.serverReadingPositions.set(context, {
+      resourceId: position.resourceId,
+      mode: position.mode,
+      contentRevision: saved.content_revision,
+      progress: saved.progress,
+      revision: saved.revision,
+      updatedAt: saved.updated_at ? Date.parse(saved.updated_at) : Date.now(),
+    })
+  }
+
+  async migrateLegacyStateIfNeeded(): Promise<void> {
+    if (this.stateMigrationVersion >= CURRENT_STATE_MIGRATION_VERSION) return
+    const capabilities = await this.createClient().capabilities()
+    if (!capabilities.features.library_state_write) return
+    const failed: FailedLegacyState[] = []
+    const markers = Array.from(this.legacyReadingMarkers).sort()
+    for (let offset = 0; offset < markers.length; offset += 500) {
+      const result = await this.createClient().importLocalState({
+        markers: markers.slice(offset, offset + 500),
+        positions: [],
+      })
+      failed.push(...this.failedImportRows(result.results))
+    }
+    for (let offset = 0; offset < this.legacyReadingPositions.length; offset += 500) {
+      const result = await this.createClient().importLocalState({
+        markers: [],
+        positions: this.legacyReadingPositions.slice(offset, offset + 500),
+      })
+      failed.push(...this.failedImportRows(result.results))
+    }
+    this.legacyReadingMarkers.clear()
+    this.legacyReadingPositions = []
+    this.failedLegacyState = failed
+    this.stateMigrationVersion = CURRENT_STATE_MIGRATION_VERSION
+    await this.persistPluginData()
   }
 
   getReadingAppearance(): ReadingAppearance {
@@ -154,30 +224,35 @@ export default class OpenRssLibraryPlugin extends Plugin {
     const snapshot: StoredPluginData = {
       baseUrl: this.settings.baseUrl,
       secretName: this.settings.secretName,
-      readingMarkers: Array.from(this.readingMarkers).sort(),
+      readingMarkers: Array.from(this.legacyReadingMarkers).sort(),
       listPaneWidth: this.listPaneWidth,
-      readingPositions: Array.from(this.readingPositions.values())
-        .sort((left, right) => right.updatedAt - left.updatedAt)
-        .slice(0, 500),
+      readingPositions: this.legacyReadingPositions,
       readingAppearance: { ...this.readingAppearance },
+      stateMigrationVersion: this.stateMigrationVersion,
+      failedLegacyState: this.failedLegacyState,
     }
     this.saveQueue = this.saveQueue.catch(() => undefined).then(() => this.saveData(snapshot))
     return this.saveQueue
   }
 
-  private readingPositionContext(key: ReadingMarkerKey, mode: ReadingViewMode): string {
-    return `${key}|${mode}`
+  private serverPositionContext(resourceId: number, mode: ReadingViewMode): string {
+    return `${resourceId}|${mode}`
   }
 
-  private trimReadingPositions(): void {
-    if (this.readingPositions.size <= 500) return
-    const retained = Array.from(this.readingPositions.values())
-      .sort((left, right) => right.updatedAt - left.updatedAt)
-      .slice(0, 500)
-    this.readingPositions = new Map(retained.map((position) => [
-      this.readingPositionContext(position.key, position.mode),
-      position,
-    ]))
+  private isReadingViewMode(value: string): value is ReadingViewMode {
+    return /^(?:note|summary|reader|segments|translation-text|translation-segments)$/.test(value)
+  }
+
+  private failedImportRows(
+    rows: Array<{ type: 'marker' | 'position'; key: string; mode?: string; status: string; reason?: string }>,
+  ): FailedLegacyState[] {
+    return rows.filter((row) => row.status === 'failed').map((row) => ({
+      type: row.type,
+      key: row.key,
+      mode: row.mode,
+      reason: row.reason,
+      retainedForVersion: CURRENT_STATE_MIGRATION_VERSION,
+    }))
   }
 
   private applyReadingAppearanceToViews(): void {

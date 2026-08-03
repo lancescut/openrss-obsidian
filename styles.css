@@ -73,6 +73,24 @@
   max-width: 126px;
 }
 
+.openrss-library__filter-toggle {
+  min-height: 30px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--openrss-border);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
+.openrss-library__filter-toggle input {
+  margin: 0;
+}
+
 .openrss-library__body {
   position: relative;
   min-height: 0;
@@ -213,6 +231,16 @@
   font-weight: var(--font-semibold);
 }
 
+.openrss-library__state-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+}
+
 .openrss-library__row-meta,
 .openrss-library__row-snippet {
   margin-top: 5px;
@@ -312,6 +340,7 @@
 .openrss-library__detail-heading {
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   margin-bottom: 14px;
 }
 
@@ -329,6 +358,36 @@
   flex-shrink: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.openrss-library__state-actions {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.openrss-library__state-actions button,
+.openrss-library__state-actions select {
+  min-height: 30px;
+  font-size: var(--font-ui-smaller);
+}
+
+.openrss-library__state-actions button.is-active {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+}
+
+.openrss-library__state-actions .openrss-library__tag-chip {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+}
+
+.openrss-library__state-readonly {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
 }
 
 .openrss-library__detail-tabs {
@@ -572,6 +631,21 @@
 
   .openrss-library__detail-links {
     justify-content: flex-start;
+  }
+
+  .openrss-library__state-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .openrss-library__state-actions button,
+  .openrss-library__state-actions select {
+    width: 100%;
+    min-height: 40px;
+  }
+
+  .openrss-library__state-readonly {
+    grid-column: 1 / -1;
   }
 
   .openrss-library__segment {

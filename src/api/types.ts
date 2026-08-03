@@ -1,7 +1,7 @@
 export type Envelope<T> = {
   ok: boolean
   data: T
-  error: { code: string; message: string } | null
+  error: { code: string; message: string; detail?: Record<string, unknown> } | null
   request_id: string
 }
 
@@ -15,18 +15,53 @@ export type Capabilities = {
     translation_segments: boolean
     knowledge_graph_links: boolean
     write: false
+    content_write: false
+    library_state_read: boolean
+    library_state_write: boolean
+    library_state_changes: boolean
   }
+}
+
+export type LibraryReadState = 'unread' | 'reading' | 'read'
+
+export type LibraryTag = {
+  id: number
+  name: string
+  color: string | null
+}
+
+export type LibraryReadingPosition = {
+  view_mode: string
+  content_revision: string | null
+  progress: number
+  revision: number
+  updated_at: string | null
+}
+
+export type LibraryResourceState = {
+  favorite: boolean
+  favorited_at: string | null
+  read_later: boolean
+  read_later_at: string | null
+  read_state: LibraryReadState
+  tags: LibraryTag[]
+  revision: number
+  updated_at: string | null
+  positions?: LibraryReadingPosition[]
 }
 
 export type NoteListItem = {
   id: number
+  resource_id: number | null
+  content_revision: string | null
+  library_state: LibraryResourceState | null
   title: string
   summary: string | null
   status: string
   note_type: 'paper_note' | 'tech_note'
   updated_at: string
   item: { id: number; title: string; url: string }
-  subscription: { id: number; name: string | null }
+  subscription: { id: number | null; name: string | null; deleted: boolean }
   snippet: string | null
 }
 
@@ -49,6 +84,9 @@ export type TranslationKind = 'summary' | 'reader'
 
 export type TranslationListItem = {
   id: number
+  resource_id: number | null
+  content_revision: string
+  library_state: LibraryResourceState | null
   kind: TranslationKind
   target_lang: string
   source_language: string
@@ -104,6 +142,9 @@ export type NoteAsset = {
 
 export type NoteDetail = {
   revision: string
+  resource_id: number | null
+  content_revision: string | null
+  library_state: LibraryResourceState | null
   note: {
     id: number
     title: string
@@ -115,7 +156,7 @@ export type NoteDetail = {
     updated_at: string
   }
   item: { id: number; title: string; url: string; published_at: string | null }
-  subscription: { id: number; name: string | null }
+  subscription: { id: number | null; name: string | null; deleted: boolean }
   translations: {
     summary: SummaryTranslation[]
     reader: ReaderTranslation[]
@@ -127,3 +168,29 @@ export type NoteDetail = {
 export type ConditionalResult<T> =
   | { notModified: true; data: null; etag: string | null }
   | { notModified: false; data: T; etag: string | null }
+
+export type LibraryStateChangePage = {
+  expired: boolean
+  cursor: number
+  latest_cursor: number
+  changes: Array<{
+    id: number
+    resource_id: number
+    change_kind: 'state' | 'tags' | 'position'
+    revision: number
+    changed_at: string
+  }>
+}
+
+export type LocalStateImportResult = {
+  results: Array<{
+    type: 'marker' | 'position'
+    key: string
+    mode?: string
+    status: 'imported' | 'skipped' | 'failed'
+    reason?: string
+  }>
+  imported: number
+  skipped: number
+  failed: number
+}

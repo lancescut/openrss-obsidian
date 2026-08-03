@@ -32,7 +32,7 @@ for (const [name, pattern] of forbidden) {
 }
 
 const main = readFileSync(resolve(root, 'src', 'main.ts'), 'utf8')
-if (!/const snapshot: StoredPluginData = \{\s*baseUrl:[\s\S]*secretName:[\s\S]*readingMarkers:[\s\S]*listPaneWidth:[\s\S]*readingPositions:[\s\S]*readingAppearance:/.test(main)) {
+if (!/const snapshot: StoredPluginData = \{\s*baseUrl:[\s\S]*secretName:[\s\S]*readingMarkers:[\s\S]*listPaneWidth:[\s\S]*readingPositions:[\s\S]*readingAppearance:[\s\S]*stateMigrationVersion:[\s\S]*failedLegacyState:/.test(main)) {
   throw new Error('Plugin data whitelist is missing')
 }
 for (const contentKey of ['body_md', 'translated_text', 'note_ids', 'assets']) {
@@ -64,8 +64,8 @@ const publicText = [
 const privatePatterns = [
   ['actual OpenRSS token', /\bors_ob_[A-Za-z0-9_-]{8,}\b/],
   ['private key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
-  ['personal Tailscale host', /desktop-g\d+|tailb43722|100\.71\.69\.6/i],
-  ['private workspace path', /E:\\github\\openrss/i],
+  ['concrete Tailscale host', /(?:https?:\/\/)?[a-z0-9-]+\.[a-z0-9-]+\.ts\.net(?::\d+)?/i],
+  ['private workspace path', /[A-Z]:\\(?:Users|github)\\/i],
 ]
 for (const [name, pattern] of privatePatterns) {
   if (pattern.test(publicText)) throw new Error(`Public repository contains ${name}`)
@@ -141,7 +141,9 @@ if (
   || preparedMermaid.blocks[1]?.source !== 'graph LR\nX --> Y'
   || preparedMermaid.markdown.includes('```mermaid')
   || !preparedMermaid.markdown.includes('```js\nconsole.log("keep")\n```')
-  || !source.includes('loadMermaid')
+  || !source.includes("import('mermaid')")
+  || !source.includes("securityLevel: 'strict'")
+  || source.includes('loadMermaid')
   || !source.includes("'script, iframe, object, embed, image, form, input, button")
   || !styles.includes('.openrss-library__mermaid svg')
 ) {
@@ -242,6 +244,8 @@ if (JSON.stringify(normalized) !== JSON.stringify({
     { key: 'translation:reader:7', mode: 'translation-segments', progress: 1, updatedAt: 150 },
   ],
   readingAppearance: { fontSize: 26, lineHeight: 1.8, maxWidth: 560 },
+  stateMigrationVersion: 0,
+  failedLegacyState: [],
 })) {
   throw new Error(`Plugin state normalization failed: ${JSON.stringify(normalized)}`)
 }
@@ -274,4 +278,16 @@ if (normalizedReadingProgress(0, 400, 500) !== 1) throw new Error('Short-content
 if (scrollTopForProgress(0.4, 1500, 500) !== 400) throw new Error('Reading position restore failed')
 if (readingProgressPercent(0.456) !== 46) throw new Error('Reading percentage rounding failed')
 
-console.log('OK — release is installable; local state is limited to connection, layout, appearance, marker and reading-position metadata')
+if (
+  !source.includes("'/api/v1/integrations/obsidian/library/changes'")
+  || !source.includes("'/api/v1/integrations/obsidian/library/import-local-state'")
+  || !source.includes('setPosition(')
+  || !source.includes('renderResourceStateActions(')
+  || !source.includes('translationSubscriptionId')
+  || !source.includes('45_000')
+  || !styles.includes('.openrss-library__state-actions')
+) {
+  throw new Error('Server-authoritative library state contract failed')
+}
+
+console.log('OK — release is installable; content and current library state remain server-authoritative')

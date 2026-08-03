@@ -15,7 +15,7 @@ export class OpenRssSettingTab extends PluginSettingTab {
     containerEl.createEl('h2', { text: 'OpenRSS Library' })
     containerEl.createEl('p', {
       cls: 'setting-item-description',
-      text: '插件只通过只读 API 显示内容，不会在 Vault 中创建笔记、YAML 或附件。',
+      text: '插件从 OpenRSS 显示只读正文；收藏、稍后读、阅读状态、标签和进度可同步回 OpenRSS。不会在 Vault 中创建笔记、YAML 或附件。',
     })
 
     new Setting(containerEl)
@@ -30,8 +30,8 @@ export class OpenRssSettingTab extends PluginSettingTab {
         }))
 
     new Setting(containerEl)
-      .setName('只读 Token')
-      .setDesc('选择现有密钥，或新建密钥并粘贴在 OpenRSS 设置页生成的 ors_ob_… Token。data.json 只保存密钥名称。')
+      .setName('OpenRSS Token')
+      .setDesc('选择现有密钥，或新建密钥并粘贴在 OpenRSS 设置页生成的 ors_ob_… Token。data.json 只保存密钥名称，不保存 Token。')
       .addComponent((element) => new SecretComponent(this.app, element)
         .setValue(this.plugin.settings.secretName)
         .onChange(async (value) => {
@@ -48,7 +48,9 @@ export class OpenRssSettingTab extends PluginSettingTab {
           button.setDisabled(true)
           try {
             const capabilities = await this.plugin.createClient().capabilities()
-            new Notice(`连接成功：${capabilities.user.username}（只读）`)
+            await this.plugin.migrateLegacyStateIfNeeded()
+            const stateMode = capabilities.features.library_state_write ? '状态同步已启用' : '状态同步未授权'
+            new Notice(`连接成功：${capabilities.user.username}（正文只读，${stateMode}）`)
           } catch (error) {
             new Notice(error instanceof Error ? error.message : String(error), 8000)
           } finally {
