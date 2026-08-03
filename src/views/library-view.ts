@@ -5,9 +5,12 @@ import type {
   NoteDetail,
   NoteFacets,
   NoteListItem,
+  NoteListPage,
+  SubscriptionFacet,
   TranslationDetail,
   TranslationKind,
   TranslationListItem,
+  TranslationListPage,
 } from '../api/types'
 import { jsonWeight, MemoryLru } from '../memory-cache'
 import {
@@ -59,12 +62,14 @@ export class OpenRssLibraryView extends ItemView {
   private query = ''
   private status: string | null = 'done'
   private noteType: string | null = null
-  private subscriptionId: number | null = null
+  private noteSubscriptionId: number | null = null
+  private translationSubscriptionId: number | null = null
   private targetLang = ''
   private entries: ListEntry[] = []
   private nextCursor: string | null = null
   private total = 0
-  private facets: NoteFacets | null = null
+  private noteFacets: NoteFacets | null = null
+  private translationSubscriptionFacets: SubscriptionFacet[] = []
   private loadingList = false
   private loadingMore = false
   private listGeneration = 0
@@ -288,11 +293,11 @@ export class OpenRssLibraryView extends ItemView {
         void this.reload(true)
       })
       const subscriptions: Array<[string, string]> = [['', '全部订阅']]
-      for (const row of this.facets?.subscriptions || []) {
+      for (const row of this.noteFacets?.subscriptions || []) {
         subscriptions.push([String(row.id), `${row.name || `#${row.id}`} (${row.count})`])
       }
-      this.addSelect(this.filtersEl, '订阅', this.subscriptionId ? String(this.subscriptionId) : '', subscriptions, (value) => {
-        this.subscriptionId = value ? Number(value) : null
+      this.addSelect(this.filtersEl, '订阅', this.noteSubscriptionId ? String(this.noteSubscriptionId) : '', subscriptions, (value) => {
+        this.noteSubscriptionId = value ? Number(value) : null
         void this.reload(true)
       })
     } else {
@@ -304,6 +309,20 @@ export class OpenRssLibraryView extends ItemView {
         this.selected = null
         void this.reload(true)
       })
+      const subscriptions: Array<[string, string]> = [['', '全部来源']]
+      for (const row of this.translationSubscriptionFacets) {
+        subscriptions.push([String(row.id), `${row.name || `#${row.id}`} (${row.count})`])
+      }
+      this.addSelect(
+        this.filtersEl,
+        '订阅',
+        this.translationSubscriptionId ? String(this.translationSubscriptionId) : '',
+        subscriptions,
+        (value) => {
+          this.translationSubscriptionId = value ? Number(value) : null
+          void this.reload(true)
+        },
+      )
       const language = this.filtersEl.createEl('input', {
         cls: 'openrss-library__filter-input',
         attr: { type: 'text', placeholder: '目标语言，如 zh', 'aria-label': '目标语言' },
@@ -420,17 +439,20 @@ export class OpenRssLibraryView extends ItemView {
           q: this.query,
           status: this.status,
           noteType: this.noteType,
-          subscriptionId: this.subscriptionId,
+          subscriptionId: this.noteSubscriptionId,
         })
         : await this.plugin.createClient().translations({
           kind: this.translationKind,
           limit: 50,
           q: this.query,
           targetLang: this.targetLang,
+          subscriptionId: this.translationSubscriptionId,
         })
       if (generation !== this.listGeneration) return
-      if (this.resource === 'notes' && 'facets' in page) {
-        this.facets = page.facets
+      if (this.resource === 'notes') {
+        this.noteFacets = (page as NoteListPage).facets
+      } else {
+        this.translationSubscriptionFacets = (page as TranslationListPage).facets.subscriptions
       }
       this.entries = page.items.map((value) => this.resource === 'notes'
         ? { resource: 'notes' as const, value: value as NoteListItem }
@@ -465,7 +487,7 @@ export class OpenRssLibraryView extends ItemView {
           q: this.query,
           status: this.status,
           noteType: this.noteType,
-          subscriptionId: this.subscriptionId,
+          subscriptionId: this.noteSubscriptionId,
         })
         : await this.plugin.createClient().translations({
           kind: this.translationKind,
@@ -473,6 +495,7 @@ export class OpenRssLibraryView extends ItemView {
           limit: 50,
           q: this.query,
           targetLang: this.targetLang,
+          subscriptionId: this.translationSubscriptionId,
         })
       if (generation !== this.listGeneration) return
       const additions: ListEntry[] = page.items.map((value) => this.resource === 'notes'

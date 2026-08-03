@@ -68,6 +68,7 @@ export class OpenRssClient {
     limit?: number
     q?: string
     targetLang?: string
+    subscriptionId?: number | null
   }): Promise<TranslationListPage> {
     return this.get('/api/v1/integrations/obsidian/translations', {
       kind: params.kind,
@@ -75,6 +76,7 @@ export class OpenRssClient {
       limit: params.limit ?? 50,
       q: params.q,
       target_lang: params.targetLang,
+      subscription_id: params.subscriptionId,
     })
   }
 
