@@ -290,4 +290,25 @@ if (
   throw new Error('Server-authoritative library state contract failed')
 }
 
-console.log('OK — release is installable; content and current library state remain server-authoritative')
+if (
+  !styles.includes('-webkit-user-select: text')
+  || !styles.includes('user-select: text')
+  || !styles.includes('-webkit-touch-callout: default')
+  || !styles.includes('.openrss-library__body.is-resizing .openrss-library__detail')
+  || !source.includes("this.splitterEl.addEventListener('lostpointercapture'")
+) {
+  throw new Error('Selectable and copyable reading-content contract failed')
+}
+
+if (
+  !source.includes("type NoteViewMode = 'note'")
+  || !source.includes('this.renderRelatedTranslations(detail)')
+  || !source.includes("this.openTranslation('summary', translation.id, 'translation-text')")
+  || !source.includes("this.openTranslation('reader', translation.id)")
+  || !source.includes("text: '全文译文'")
+  || source.includes("['segments', '段落对照'")
+) {
+  throw new Error('Contextual related-resource navigation contract failed')
+}
+
+console.log('OK — release is installable; content is selectable and related resources keep contextual modes')

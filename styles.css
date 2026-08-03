@@ -15,7 +15,8 @@
 .openrss-library__detail-links,
 .openrss-library__tabs,
 .openrss-library__detail-tabs,
-.openrss-library__related-notes {
+.openrss-library__related-notes,
+.openrss-library__related-resources {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -257,6 +258,28 @@
   overflow: auto;
   padding: 18px clamp(16px, 3vw, 38px) 48px;
   scroll-padding-top: 54px;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.openrss-library__detail :is(
+  h1, h2, h3, h4, h5, h6,
+  p, li, blockquote, pre, code, td, th,
+  .openrss-library__detail-meta,
+  .openrss-library__segment-source,
+  .openrss-library__segment-translation
+) {
+  cursor: text;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default;
+}
+
+.openrss-library__body.is-resizing .openrss-library__detail,
+.openrss-library__body.is-resizing .openrss-library__detail * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
 
 .openrss-library__reading-controls {
@@ -479,13 +502,15 @@
   border-right: 1px solid var(--openrss-border);
 }
 
-.openrss-library__related-notes {
+.openrss-library__related-notes,
+.openrss-library__related-resources {
   flex-wrap: wrap;
   margin-bottom: 12px;
   color: var(--text-muted);
 }
 
-.openrss-library__related-notes button {
+.openrss-library__related-notes button,
+.openrss-library__related-resources button {
   padding: 2px 7px;
 }
 
