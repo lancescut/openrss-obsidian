@@ -30,10 +30,12 @@ export type NoteListItem = {
   snippet: string | null
 }
 
+export type SubscriptionFacet = { id: number; name: string | null; count: number }
+
 export type NoteFacets = {
   status: Record<string, number>
   note_type: Record<string, number>
-  subscriptions: Array<{ id: number; name: string | null; count: number }>
+  subscriptions: SubscriptionFacet[]
 }
 
 export type NoteListPage = {
@@ -65,6 +67,7 @@ export type TranslationListPage = {
   items: TranslationListItem[]
   next_cursor: string | null
   total: number
+  facets: { subscriptions: SubscriptionFacet[] }
 }
 
 export type TranslationSegment = { src: string; trans: string }

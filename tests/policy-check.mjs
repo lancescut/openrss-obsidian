@@ -113,6 +113,13 @@ if (
 ) {
   throw new Error('Mobile drawer layout contract failed')
 }
+if (
+  (source.match(/subscription_id: params\.subscriptionId/g) || []).length < 2
+  || !source.includes('translationSubscriptionFacets')
+  || !source.includes("facets: { subscriptions: SubscriptionFacet[] }")
+) {
+  throw new Error('Translation subscription filter contract failed')
+}
 if (normalizeBaseUrl('https://rss.example.com/') !== 'https://rss.example.com') {
   throw new Error('HTTPS URL normalization failed')
 }
