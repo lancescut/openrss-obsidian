@@ -120,6 +120,33 @@ if (
 ) {
   throw new Error('Translation subscription filter contract failed')
 }
+const { extractMermaidBlocks } = await importTypeScript(resolve(src, 'render', 'mermaid-blocks.ts'))
+const preparedMermaid = extractMermaidBlocks([
+  '# Diagram',
+  '```mermaid',
+  'flowchart TD',
+  'A --> B',
+  '```',
+  '~~~MERMAID optional-title',
+  'graph LR',
+  'X --> Y',
+  '~~~~',
+  '```js',
+  'console.log("keep")',
+  '```',
+].join('\n'), 'test-mermaid')
+if (
+  preparedMermaid.blocks.length !== 2
+  || preparedMermaid.blocks[0]?.source !== 'flowchart TD\nA --> B'
+  || preparedMermaid.blocks[1]?.source !== 'graph LR\nX --> Y'
+  || preparedMermaid.markdown.includes('```mermaid')
+  || !preparedMermaid.markdown.includes('```js\nconsole.log("keep")\n```')
+  || !source.includes('loadMermaid')
+  || !source.includes("'script, iframe, object, embed, image, form, input, button")
+  || !styles.includes('.openrss-library__mermaid svg')
+) {
+  throw new Error('Safe Mermaid rendering contract failed')
+}
 if (normalizeBaseUrl('https://rss.example.com/') !== 'https://rss.example.com') {
   throw new Error('HTTPS URL normalization failed')
 }

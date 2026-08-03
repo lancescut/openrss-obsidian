@@ -354,6 +354,31 @@
   height: auto;
 }
 
+.openrss-library__mermaid {
+  width: 100%;
+  margin: 18px 0;
+  padding: 14px;
+  box-sizing: border-box;
+  overflow-x: auto;
+  border: 1px solid var(--openrss-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.openrss-library__mermaid svg {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.openrss-library__mermaid-error {
+  margin-bottom: 8px;
+  color: var(--text-error);
+  font-size: var(--font-ui-small);
+}
+
 .openrss-library__translation-section {
   border-bottom: 1px solid var(--openrss-border);
   padding-bottom: 18px;
