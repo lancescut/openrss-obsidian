@@ -41,7 +41,7 @@ const MIN_LIST_PANE_WIDTH = 28
 const MIN_DETAIL_PANE_WIDTH = 260
 const SPLITTER_WIDTH = 10
 type Resource = 'notes' | 'translations'
-type NoteViewMode = 'note' | 'summary' | 'reader' | 'segments'
+type NoteViewMode = 'note'
 type TranslationViewMode = 'translation-text' | 'translation-segments'
 type ListEntry =
   | { resource: 'notes'; value: NoteListItem }
@@ -443,6 +443,9 @@ export class OpenRssLibraryView extends ItemView {
     })
     this.splitterEl.addEventListener('pointerup', finishResize)
     this.splitterEl.addEventListener('pointercancel', finishResize)
+    this.splitterEl.addEventListener('lostpointercapture', (event) => {
+      if (activePointerId === event.pointerId) finishResize(event)
+    })
     this.splitterEl.addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return
       event.preventDefault()
@@ -875,104 +878,63 @@ export class OpenRssLibraryView extends ItemView {
       this.renderResourceStateActions(heading, detail.resource_id, detail.library_state)
     }
 
-    const tabs = this.detailEl.createDiv({ cls: 'openrss-library__detail-tabs' })
-    const choices: Array<[NoteViewMode, string, number | null]> = [
-      ['note', '笔记', null],
-      ['summary', '摘要翻译', detail.translations.summary.length],
-      ['reader', '全文翻译', detail.translations.reader.length],
-      ['segments', '段落对照', detail.translations.reader.filter((row) => row.translated_segments?.length).length],
-    ]
+    this.renderRelatedTranslations(detail)
     const content = this.detailEl.createDiv({ cls: 'openrss-library__markdown markdown-rendered' })
-    const switchMode = async (mode: NoteViewMode) => {
-      if (mode === this.selectedNoteMode && this.readingContentReady) return
-      this.persistCurrentReadingProgress()
-      this.readingContentReady = false
-      this.selectedNoteMode = mode
-      this.resumeDismissedContext = null
-      this.detailEl.scrollTop = 0
-      for (const button of Array.from(tabs.querySelectorAll('button'))) {
-        button.toggleClass('is-active', button.dataset.mode === mode)
-      }
-      await this.renderNoteMode(content, detail, mode, generation)
-      this.finishReadingContent(generation)
-      this.readingProgressDirty = true
-      this.scheduleReadingProgressSave()
-    }
-    for (const [mode, label, count] of choices) {
-      const button = tabs.createEl('button', {
-        cls: `openrss-library__tab${this.selectedNoteMode === mode ? ' is-active' : ''}`,
-        text: count === null ? label : `${label} (${count})`,
-        attr: { type: 'button', 'data-mode': mode },
-      })
-      button.addEventListener('click', () => void switchMode(mode))
-    }
-    await this.renderNoteMode(content, detail, this.selectedNoteMode, generation)
+    await this.renderNoteBody(content, detail, generation)
     this.finishReadingContent(generation)
   }
 
-  private async renderNoteMode(
+  private renderRelatedTranslations(detail: NoteDetail): void {
+    if (!detail.translations.summary.length && !detail.translations.reader.length) return
+    const related = this.detailEl.createDiv({ cls: 'openrss-library__related-resources' })
+    related.createSpan({ text: '关联翻译：' })
+    for (const translation of detail.translations.summary) {
+      const label = `摘要翻译 · ${translation.target_lang} · ${translation.model}`
+      const button = related.createEl('button', {
+        text: label,
+        attr: { type: 'button', 'aria-label': `打开${label}` },
+      })
+      button.addEventListener('click', () => {
+        void this.openTranslation('summary', translation.id, 'translation-text')
+      })
+    }
+    for (const translation of detail.translations.reader) {
+      const segmentHint = translation.translated_segments?.length ? ' · 含段落对照' : ''
+      const label = `全文翻译 · ${translation.target_lang} · ${translation.source_mode}${segmentHint}`
+      const button = related.createEl('button', {
+        text: label,
+        attr: { type: 'button', 'aria-label': `打开${label}` },
+      })
+      button.addEventListener('click', () => {
+        void this.openTranslation('reader', translation.id)
+      })
+    }
+  }
+
+  private async renderNoteBody(
     container: HTMLElement,
     detail: NoteDetail,
-    mode: NoteViewMode,
     generation: number,
   ): Promise<void> {
     const contentGeneration = ++this.contentGeneration
     const markdownOwner = this.resetMarkdownScope()
     container.empty()
     this.assets.clear()
-    if (mode === 'note') {
-      const original = detail.note.body_md || detail.note.summary || '这篇笔记没有正文。'
-      let markdown = original
-      try {
-        markdown = await this.assets.hydrate(
-          this.plugin.createClient(), detail.note.id, original, detail.assets,
-        )
-      } catch {
-        this.assets.clear()
-        container.createDiv({ cls: 'openrss-library__warning', text: '部分图片加载失败，正文仍可阅读。' })
-      }
-      if (generation !== this.detailGeneration || contentGeneration !== this.contentGeneration) {
-        this.assets.clear()
-        return
-      }
-      await renderMarkdown(this.app, markdownOwner, container, markdown)
+    const original = detail.note.body_md || detail.note.summary || '这篇笔记没有正文。'
+    let markdown = original
+    try {
+      markdown = await this.assets.hydrate(
+        this.plugin.createClient(), detail.note.id, original, detail.assets,
+      )
+    } catch {
+      this.assets.clear()
+      container.createDiv({ cls: 'openrss-library__warning', text: '部分图片加载失败，正文仍可阅读。' })
+    }
+    if (generation !== this.detailGeneration || contentGeneration !== this.contentGeneration) {
+      this.assets.clear()
       return
     }
-    if (mode === 'summary') {
-      if (!detail.translations.summary.length) {
-        container.createDiv({ cls: 'openrss-library__empty-detail', text: '没有已有的摘要翻译。' })
-        return
-      }
-      for (const translation of detail.translations.summary) {
-        container.createEl('h3', { text: `${translation.target_lang} · ${translation.model}` })
-        const section = container.createDiv({ cls: 'openrss-library__translation-section' })
-        if (contentGeneration !== this.contentGeneration) return
-        await renderMarkdown(this.app, markdownOwner, section, translation.translated_text)
-      }
-      return
-    }
-    if (mode === 'reader') {
-      if (!detail.translations.reader.length) {
-        container.createDiv({ cls: 'openrss-library__empty-detail', text: '没有已有的全文翻译。' })
-        return
-      }
-      for (const translation of detail.translations.reader) {
-        container.createEl('h3', { text: `${translation.target_lang} · ${translation.source_mode} · ${translation.model}` })
-        const section = container.createDiv({ cls: 'openrss-library__translation-section' })
-        if (contentGeneration !== this.contentGeneration) return
-        await renderMarkdown(this.app, markdownOwner, section, translation.translated_text)
-      }
-      return
-    }
-    const translated = detail.translations.reader.filter((row) => row.translated_segments?.length)
-    if (!translated.length) {
-      container.createDiv({ cls: 'openrss-library__empty-detail', text: '这篇全文翻译没有段落对照数据。' })
-      return
-    }
-    for (const translation of translated) {
-      container.createEl('h3', { text: `${translation.target_lang} · ${translation.source_mode}` })
-      this.renderSegments(container, translation.translated_segments || [])
-    }
+    await renderMarkdown(this.app, markdownOwner, container, markdown)
   }
 
   private async renderTranslationDetail(detail: TranslationDetail, generation: number): Promise<void> {
@@ -1002,7 +964,7 @@ export class OpenRssLibraryView extends ItemView {
     }
     if (detail.translated_segments?.length) {
       const tabs = this.detailEl.createDiv({ cls: 'openrss-library__detail-tabs' })
-      const textButton = tabs.createEl('button', { cls: 'openrss-library__tab', text: '译文', attr: { type: 'button' } })
+      const textButton = tabs.createEl('button', { cls: 'openrss-library__tab', text: '全文译文', attr: { type: 'button' } })
       const segmentButton = tabs.createEl('button', { cls: 'openrss-library__tab', text: '段落对照', attr: { type: 'button' } })
       const content = this.detailEl.createDiv({ cls: 'openrss-library__markdown markdown-rendered' })
       const showText = async (userInitiated: boolean) => {
@@ -1397,7 +1359,7 @@ export class OpenRssLibraryView extends ItemView {
   }
 
   private isNoteViewMode(mode: ReadingViewMode | undefined): mode is NoteViewMode {
-    return mode === 'note' || mode === 'summary' || mode === 'reader' || mode === 'segments'
+    return mode === 'note'
   }
 
   private isTranslationViewMode(mode: ReadingViewMode | undefined): mode is TranslationViewMode {
