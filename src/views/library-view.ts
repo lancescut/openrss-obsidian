@@ -28,6 +28,7 @@ import {
 } from '../reading-progress'
 import { NoteAssetSession } from '../render/assets'
 import { renderMarkdown } from '../render/markdown'
+import { nextMobileDrawerOpen, type MobileDrawerAction } from '../mobile-drawer'
 
 
 export const OPENRSS_LIBRARY_VIEW = 'openrss-library-view'
@@ -78,6 +79,7 @@ export class OpenRssLibraryView extends ItemView {
   private readingProgressDirty = false
   private suppressProgressTracking = false
   private resumeDismissedContext: string | null = null
+  private mobileListOpen = true
   private cache = new MemoryLru<CachedDetail>(10, DETAIL_CACHE_BYTES)
   private assets = new NoteAssetSession()
   private markdownScope: Component | null = null
@@ -90,6 +92,7 @@ export class OpenRssLibraryView extends ItemView {
   )
 
   private toolbarEl!: HTMLElement
+  private mobileListToggleEl!: HTMLButtonElement
   private filtersEl!: HTMLElement
   private bodyEl!: HTMLElement
   private listPaneEl!: HTMLElement
@@ -98,6 +101,7 @@ export class OpenRssLibraryView extends ItemView {
   private scrollEl!: HTMLElement
   private virtualEl!: HTMLElement
   private detailEl!: HTMLElement
+  private mobileListBackdropEl!: HTMLButtonElement
   private previousButtonEl: HTMLButtonElement | null = null
   private nextButtonEl: HTMLButtonElement | null = null
   private progressFillEl: HTMLElement | null = null
@@ -163,7 +167,19 @@ export class OpenRssLibraryView extends ItemView {
     root.empty()
     root.addClass('openrss-library')
 
+    if (!this.selected) this.mobileListOpen = true
+
     this.toolbarEl = root.createDiv({ cls: 'openrss-library__topbar' })
+    this.mobileListToggleEl = this.toolbarEl.createEl('button', {
+      cls: 'openrss-library__mobile-list-toggle',
+      text: '列表',
+      attr: {
+        type: 'button',
+        'aria-label': '隐藏资料列表',
+        'aria-expanded': 'true',
+      },
+    })
+    this.mobileListToggleEl.addEventListener('click', () => this.setMobileListState('toggle'))
     const resourceTabs = this.toolbarEl.createDiv({ cls: 'openrss-library__tabs' })
     for (const [resource, label] of [['notes', '笔记'], ['translations', '翻译']] as const) {
       const button = resourceTabs.createEl('button', {
@@ -176,6 +192,7 @@ export class OpenRssLibraryView extends ItemView {
         this.persistCurrentReadingProgress()
         this.resource = resource
         this.selected = null
+        this.mobileListOpen = true
         this.renderShell()
         void this.reload(true)
       })
@@ -208,7 +225,10 @@ export class OpenRssLibraryView extends ItemView {
     this.toolbarEl.appendChild(refresh)
 
     this.bodyEl = root.createDiv({ cls: 'openrss-library__body' })
-    this.listPaneEl = this.bodyEl.createDiv({ cls: 'openrss-library__list-pane' })
+    this.listPaneEl = this.bodyEl.createDiv({
+      cls: 'openrss-library__list-pane',
+      attr: { role: 'navigation', 'aria-label': 'OpenRSS 资料列表' },
+    })
     this.statsEl = this.listPaneEl.createDiv({ cls: 'openrss-library__stats', text: '准备加载…' })
     this.scrollEl = this.listPaneEl.createDiv({ cls: 'openrss-library__scroll' })
     this.virtualEl = this.scrollEl.createDiv({ cls: 'openrss-library__virtual' })
@@ -229,6 +249,12 @@ export class OpenRssLibraryView extends ItemView {
     this.splitterEl.createDiv({ cls: 'openrss-library__splitter-grip' })
     this.detailEl = this.bodyEl.createDiv({ cls: 'openrss-library__detail' })
     this.detailEl.addEventListener('scroll', () => this.handleDetailScroll())
+    this.mobileListBackdropEl = this.bodyEl.createEl('button', {
+      cls: 'openrss-library__mobile-list-backdrop',
+      attr: { type: 'button', 'aria-label': '关闭资料列表', tabindex: '-1' },
+    })
+    this.mobileListBackdropEl.addEventListener('click', () => this.setMobileListState('close'))
+    this.applyMobileListState()
     this.configureListSplitter()
     this.applyReadingAppearance()
     this.renderEmptyDetail()
@@ -601,6 +627,7 @@ export class OpenRssLibraryView extends ItemView {
     this.persistCurrentReadingProgress()
     const generation = ++this.detailGeneration
     this.selected = { resource: 'notes', id: noteId }
+    this.setMobileListState('select')
     const latestMode = this.plugin.getLatestReadingPosition(noteMarkerKey(noteId))?.mode
     this.selectedNoteMode = preferredMode || (this.isNoteViewMode(latestMode) ? latestMode : 'note')
     this.selectedTranslationMode = 'translation-text'
@@ -642,6 +669,7 @@ export class OpenRssLibraryView extends ItemView {
     this.persistCurrentReadingProgress()
     const generation = ++this.detailGeneration
     this.selected = { resource: 'translations', id: translationId, kind }
+    this.setMobileListState('select')
     const latestMode = this.plugin.getLatestReadingPosition(translationMarkerKey(kind, translationId))?.mode
     this.selectedTranslationMode = preferredMode
       || (this.isTranslationViewMode(latestMode) ? latestMode : 'translation-text')
@@ -946,7 +974,17 @@ export class OpenRssLibraryView extends ItemView {
   }
 
   private handleReadingShortcut(event: KeyboardEvent): void {
-    if (this.app.workspace.activeLeaf !== this.leaf || !this.selected) return
+    if (this.app.workspace.activeLeaf !== this.leaf) return
+    if (
+      event.key === 'Escape'
+      && this.mobileListOpen
+      && window.matchMedia('(max-width: 760px)').matches
+    ) {
+      event.preventDefault()
+      this.setMobileListState('close')
+      return
+    }
+    if (!this.selected) return
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
     const target = event.target
     if (
@@ -959,6 +997,24 @@ export class OpenRssLibraryView extends ItemView {
     if (key !== 'j' && key !== 'k') return
     event.preventDefault()
     void this.moveSelection(key === 'j' ? 1 : -1)
+  }
+
+  private setMobileListState(action: MobileDrawerAction): void {
+    this.mobileListOpen = nextMobileDrawerOpen(this.mobileListOpen, action)
+    this.applyMobileListState()
+  }
+
+  private applyMobileListState(): void {
+    if (!this.bodyEl || !this.mobileListToggleEl) return
+    this.bodyEl.toggleClass('is-mobile-list-open', this.mobileListOpen)
+    this.mobileListToggleEl.setAttribute('aria-expanded', String(this.mobileListOpen))
+    this.mobileListToggleEl.setAttribute(
+      'aria-label',
+      this.mobileListOpen ? '隐藏资料列表' : '展开资料列表',
+    )
+    if (this.mobileListBackdropEl) {
+      this.mobileListBackdropEl.setAttribute('aria-hidden', String(!this.mobileListOpen))
+    }
   }
 
   private handleDetailScroll(): void {

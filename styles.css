@@ -74,6 +74,7 @@
 }
 
 .openrss-library__body {
+  position: relative;
   min-height: 0;
   flex: 1;
   display: grid;
@@ -82,6 +83,11 @@
   border-radius: var(--radius-m);
   overflow: hidden;
   background: var(--background-primary);
+}
+
+.openrss-library__mobile-list-toggle,
+.openrss-library__mobile-list-backdrop {
+  display: none;
 }
 
 .openrss-library__list-pane {
@@ -434,11 +440,27 @@
 
   .openrss-library__body {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(180px, 32%) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .openrss-library__list-pane {
-    border-bottom: 1px solid var(--openrss-border);
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 4;
+    width: min(86vw, 360px);
+    max-width: calc(100% - 42px);
+    border-right: 1px solid var(--openrss-border);
+    box-shadow: var(--shadow-l, 0 12px 36px rgb(0 0 0 / 35%));
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 180ms ease, visibility 0s linear 180ms;
+    will-change: transform;
+  }
+
+  .openrss-library__body.is-mobile-list-open .openrss-library__list-pane {
+    transform: translateX(0);
+    visibility: visible;
+    transition-delay: 0s;
   }
 
   .openrss-library__splitter {
@@ -449,11 +471,54 @@
     min-height: 38px;
   }
 
+  .openrss-library__mobile-list-toggle {
+    position: sticky;
+    left: 0;
+    z-index: 6;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    min-width: 58px;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+  }
+
+  .openrss-library__mobile-list-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: block;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    appearance: none;
+    background: rgb(0 0 0 / 38%);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 180ms ease, visibility 0s linear 180ms;
+  }
+
+  .openrss-library__body.is-mobile-list-open .openrss-library__mobile-list-backdrop {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
+  }
+
   .openrss-library__search {
     min-width: 140px;
   }
 
   .openrss-library__detail {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    height: 100%;
     padding: 14px 12px 40px;
     scroll-padding-top: 92px;
   }
@@ -495,5 +560,12 @@
 
   .openrss-library__segment-source {
     border-right: 0;
+  }
+}
+
+@media (max-width: 760px) and (prefers-reduced-motion: reduce) {
+  .openrss-library__list-pane,
+  .openrss-library__mobile-list-backdrop {
+    transition: none;
   }
 }
