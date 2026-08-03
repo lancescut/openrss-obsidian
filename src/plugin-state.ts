@@ -26,6 +26,14 @@ export type ReadingAppearance = {
   maxWidth: number
 }
 
+export type FailedLegacyState = {
+  type: 'marker' | 'position'
+  key: string
+  mode?: string
+  reason?: string
+  retainedForVersion: number
+}
+
 export type StoredPluginData = {
   baseUrl: string
   secretName: string
@@ -33,7 +41,11 @@ export type StoredPluginData = {
   listPaneWidth: number | null
   readingPositions: ReadingPosition[]
   readingAppearance: ReadingAppearance
+  stateMigrationVersion: number
+  failedLegacyState: FailedLegacyState[]
 }
+
+export const CURRENT_STATE_MIGRATION_VERSION = 1
 
 export const DEFAULT_READING_APPEARANCE: ReadingAppearance = {
   fontSize: 16,
@@ -48,6 +60,8 @@ export const DEFAULT_PLUGIN_DATA: StoredPluginData = {
   listPaneWidth: null,
   readingPositions: [],
   readingAppearance: { ...DEFAULT_READING_APPEARANCE },
+  stateMigrationVersion: 0,
+  failedLegacyState: [],
 }
 
 const READING_MARKER_PATTERN = /^(?:note:[1-9]\d*|translation:(?:summary|reader):[1-9]\d*)$/
@@ -86,6 +100,13 @@ export function normalizeStoredPluginData(raw: unknown): StoredPluginData {
     : null
   const positions = normalizeReadingPositions(value.readingPositions)
   const appearance = normalizeReadingAppearance(value.readingAppearance)
+  const stateMigrationVersion = typeof value.stateMigrationVersion === 'number'
+    && Number.isInteger(value.stateMigrationVersion)
+    && value.stateMigrationVersion >= 0
+    ? value.stateMigrationVersion
+    : 0
+  const failedLegacyState = normalizeFailedLegacyState(value.failedLegacyState)
+    .filter((item) => item.retainedForVersion >= CURRENT_STATE_MIGRATION_VERSION)
   return {
     baseUrl: typeof value.baseUrl === 'string' ? value.baseUrl : DEFAULT_PLUGIN_DATA.baseUrl,
     secretName: typeof value.secretName === 'string' ? value.secretName : '',
@@ -95,7 +116,30 @@ export function normalizeStoredPluginData(raw: unknown): StoredPluginData {
       : Math.min(MAX_STORED_LIST_PANE_WIDTH, Math.max(MIN_LIST_PANE_WIDTH, width)),
     readingPositions: positions,
     readingAppearance: appearance,
+    stateMigrationVersion,
+    failedLegacyState,
   }
+}
+
+function normalizeFailedLegacyState(raw: unknown): FailedLegacyState[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((item): FailedLegacyState[] => {
+    if (!item || typeof item !== 'object') return []
+    const value = item as Record<string, unknown>
+    if (value.type !== 'marker' && value.type !== 'position') return []
+    if (typeof value.key !== 'string' || value.key.length > 160) return []
+    const retainedForVersion = typeof value.retainedForVersion === 'number'
+      && Number.isInteger(value.retainedForVersion)
+      ? value.retainedForVersion
+      : 0
+    return [{
+      type: value.type,
+      key: value.key,
+      mode: typeof value.mode === 'string' ? value.mode.slice(0, 64) : undefined,
+      reason: typeof value.reason === 'string' ? value.reason.slice(0, 240) : undefined,
+      retainedForVersion,
+    }]
+  }).slice(0, 500)
 }
 
 export function normalizeReadingPosition(raw: unknown): ReadingPosition | null {

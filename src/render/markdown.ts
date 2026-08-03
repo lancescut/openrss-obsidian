@@ -1,15 +1,17 @@
-import { App, Component, loadMermaid, MarkdownRenderer } from 'obsidian'
+import { App, Component, MarkdownRenderer } from 'obsidian'
 import { extractMermaidBlocks, type MermaidBlock } from './mermaid-blocks'
 
 
 type MermaidRenderResult = string | { svg: string }
 
 type MermaidEngine = {
+  initialize: (config: Record<string, unknown>) => void
   render: (id: string, source: string) => MermaidRenderResult | Promise<MermaidRenderResult>
 }
 
 const MAX_MERMAID_SOURCE_LENGTH = 100_000
 let mermaidRenderSequence = 0
+let mermaidEnginePromise: Promise<MermaidEngine> | null = null
 
 
 export function stripFrontmatter(markdown: string): string {
@@ -54,8 +56,17 @@ async function renderMermaidBlocks(container: HTMLElement, blocks: MermaidBlock[
   let loadError: unknown = null
 
   try {
-    const loaded = await loadMermaid() as MermaidEngine | { default?: MermaidEngine }
-    engine = 'render' in loaded ? loaded : loaded.default || null
+    mermaidEnginePromise ??= import('mermaid').then((loaded) => {
+      const bundled = loaded.default as unknown as MermaidEngine
+      bundled.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        suppressErrorRendering: true,
+        flowchart: { htmlLabels: false },
+      })
+      return bundled
+    })
+    engine = await mermaidEnginePromise
     if (!engine?.render) throw new Error('Mermaid engine is unavailable')
   } catch (error) {
     loadError = error

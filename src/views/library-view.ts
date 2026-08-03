@@ -6,6 +6,9 @@ import type {
   NoteFacets,
   NoteListItem,
   NoteListPage,
+  LibraryReadState,
+  LibraryResourceState,
+  LibraryTag,
   SubscriptionFacet,
   TranslationDetail,
   TranslationKind,
@@ -18,12 +21,7 @@ import {
   LONG_PRESS_MOVE_TOLERANCE,
   LONG_PRESS_MS,
 } from '../long-press'
-import {
-  noteMarkerKey,
-  translationMarkerKey,
-  type ReadingMarkerKey,
-  type ReadingViewMode,
-} from '../plugin-state'
+import type { ReadingViewMode } from '../plugin-state'
 import {
   normalizedReadingProgress,
   readingProgressPercent,
@@ -65,6 +63,13 @@ export class OpenRssLibraryView extends ItemView {
   private noteSubscriptionId: number | null = null
   private translationSubscriptionId: number | null = null
   private targetLang = ''
+  private favoriteOnly = false
+  private readLaterOnly = false
+  private readState: LibraryReadState | null = null
+  private tagId: number | null = null
+  private tags: LibraryTag[] = []
+  private libraryStateWrite = false
+  private changesCursor = 0
   private entries: ListEntry[] = []
   private nextCursor: string | null = null
   private total = 0
@@ -84,6 +89,8 @@ export class OpenRssLibraryView extends ItemView {
   private readingProgressDirty = false
   private suppressProgressTracking = false
   private resumeDismissedContext: string | null = null
+  private currentResourceId: number | null = null
+  private currentContentRevision: string | null = null
   private mobileListOpen = true
   private cache = new MemoryLru<CachedDetail>(10, DETAIL_CACHE_BYTES)
   private assets = new NoteAssetSession()
@@ -113,6 +120,8 @@ export class OpenRssLibraryView extends ItemView {
   private progressTextEl: HTMLElement | null = null
   private progressTrackEl: HTMLElement | null = null
   private resumeButtonEl: HTMLButtonElement | null = null
+  private stateActionsParentEl: HTMLElement | null = null
+  private stateActionsEl: HTMLElement | null = null
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: OpenRssLibraryPlugin) {
     super(leaf)
@@ -134,8 +143,22 @@ export class OpenRssLibraryView extends ItemView {
     this.renderShell()
     this.registerDomEvent(document, 'keydown', (event) => this.handleReadingShortcut(event))
     this.registerInterval(window.setInterval(() => {
-      if (this.scrollEl.scrollTop < 100 && !document.hidden) void this.reload(false)
-    }, 60_000))
+      if (!document.hidden) void this.pollLibraryChanges()
+    }, 45_000))
+    try {
+      await this.plugin.migrateLegacyStateIfNeeded()
+      const [capabilities, tags] = await Promise.all([
+        this.plugin.createClient().capabilities(),
+        this.plugin.createClient().tags(),
+      ])
+      this.libraryStateWrite = capabilities.features.library_state_write
+      this.tags = tags
+      const baseline = await this.plugin.createClient().changes(0)
+      this.changesCursor = baseline.latest_cursor
+      this.renderFilters()
+    } catch (error) {
+      new Notice(`OpenRSS 状态同步初始化失败：${this.errorText(error)}`, 7000)
+    }
     await this.reload(true)
   }
 
@@ -333,6 +356,37 @@ export class OpenRssLibraryView extends ItemView {
         void this.reload(true)
       })
     }
+    this.addSelect(this.filtersEl, '阅读状态', this.readState || '', [
+      ['', '全部阅读状态'],
+      ['unread', '未读'],
+      ['reading', '阅读中'],
+      ['read', '已读'],
+    ], (value) => {
+      this.readState = value ? value as LibraryReadState : null
+      void this.reload(true)
+    })
+    const tagOptions: Array<[string, string]> = [['', '全部标签']]
+    for (const tag of this.tags) tagOptions.push([String(tag.id), tag.name])
+    this.addSelect(this.filtersEl, '标签', this.tagId ? String(this.tagId) : '', tagOptions, (value) => {
+      this.tagId = value ? Number(value) : null
+      void this.reload(true)
+    })
+    this.addFilterToggle('收藏', this.favoriteOnly, (checked) => {
+      this.favoriteOnly = checked
+      void this.reload(true)
+    })
+    this.addFilterToggle('稍后读', this.readLaterOnly, (checked) => {
+      this.readLaterOnly = checked
+      void this.reload(true)
+    })
+  }
+
+  private addFilterToggle(label: string, checked: boolean, onChange: (checked: boolean) => void): void {
+    const wrapper = this.filtersEl.createEl('label', { cls: 'openrss-library__filter-toggle' })
+    const input = wrapper.createEl('input', { attr: { type: 'checkbox' } })
+    input.checked = checked
+    wrapper.createSpan({ text: label })
+    input.addEventListener('change', () => onChange(input.checked))
   }
 
   private addSelect(
@@ -440,6 +494,10 @@ export class OpenRssLibraryView extends ItemView {
           status: this.status,
           noteType: this.noteType,
           subscriptionId: this.noteSubscriptionId,
+          favorite: this.favoriteOnly || null,
+          readLater: this.readLaterOnly || null,
+          readState: this.readState,
+          tagId: this.tagId,
         })
         : await this.plugin.createClient().translations({
           kind: this.translationKind,
@@ -447,6 +505,10 @@ export class OpenRssLibraryView extends ItemView {
           q: this.query,
           targetLang: this.targetLang,
           subscriptionId: this.translationSubscriptionId,
+          favorite: this.favoriteOnly || null,
+          readLater: this.readLaterOnly || null,
+          readState: this.readState,
+          tagId: this.tagId,
         })
       if (generation !== this.listGeneration) return
       if (this.resource === 'notes') {
@@ -488,6 +550,10 @@ export class OpenRssLibraryView extends ItemView {
           status: this.status,
           noteType: this.noteType,
           subscriptionId: this.noteSubscriptionId,
+          favorite: this.favoriteOnly || null,
+          readLater: this.readLaterOnly || null,
+          readState: this.readState,
+          tagId: this.tagId,
         })
         : await this.plugin.createClient().translations({
           kind: this.translationKind,
@@ -496,6 +562,10 @@ export class OpenRssLibraryView extends ItemView {
           q: this.query,
           targetLang: this.targetLang,
           subscriptionId: this.translationSubscriptionId,
+          favorite: this.favoriteOnly || null,
+          readLater: this.readLaterOnly || null,
+          readState: this.readState,
+          tagId: this.tagId,
         })
       if (generation !== this.listGeneration) return
       const additions: ListEntry[] = page.items.map((value) => this.resource === 'notes'
@@ -530,8 +600,8 @@ export class OpenRssLibraryView extends ItemView {
     const last = Math.min(this.entries.length, first + visibleCount)
     for (let index = first; index < last; index += 1) {
       const entry = this.entries[index]
-      const markerKey = this.entryMarkerKey(entry)
-      const marked = this.plugin.isReadingMarked(markerKey)
+      const state = entry.value.library_state
+      const marked = state?.read_state === 'reading'
       const row = this.virtualEl.createEl('button', {
         cls: [
           'openrss-library__row',
@@ -548,6 +618,9 @@ export class OpenRssLibraryView extends ItemView {
       const titleRow = row.createDiv({ cls: 'openrss-library__row-title-line' })
       titleRow.createDiv({ cls: 'openrss-library__row-title', text: title })
       if (marked) titleRow.createSpan({ cls: 'openrss-library__reading-badge', text: '在读' })
+      if (state?.read_state === 'read') titleRow.createSpan({ cls: 'openrss-library__reading-badge', text: '已读' })
+      if (state?.favorite) titleRow.createSpan({ cls: 'openrss-library__state-badge', text: '★' })
+      if (state?.read_later) titleRow.createSpan({ cls: 'openrss-library__state-badge', text: '稍后读' })
       const meta = entry.resource === 'notes'
         ? `${entry.value.subscription.name || '未命名订阅'} · ${this.noteTypeLabel(entry.value.note_type)} · ${this.formatDate(entry.value.updated_at)}`
         : `${entry.value.kind === 'reader' ? '全文' : '摘要'} · ${entry.value.target_lang} · ${entry.value.char_count.toLocaleString()} 字符 · ${this.formatDate(entry.value.updated_at)}`
@@ -603,30 +676,70 @@ export class OpenRssLibraryView extends ItemView {
   }
 
   private showReadingMarkerMenu(entry: ListEntry, x: number, y: number): void {
-    const key = this.entryMarkerKey(entry)
-    const marked = this.plugin.isReadingMarked(key)
+    const resourceId = entry.value.resource_id
+    const state = entry.value.library_state
     const menu = new Menu()
+    if (!resourceId || !state) {
+      menu.addItem((item) => item.setTitle('这条资料暂不支持状态操作').setDisabled(true))
+      menu.showAtPosition({ x, y })
+      return
+    }
     menu.addItem((item) => item
-      .setTitle(marked ? '取消当前阅读标记' : '标记为当前阅读')
-      .setIcon(marked ? 'bookmark-x' : 'bookmark')
-      .onClick(() => void this.updateReadingMarker(key, !marked)))
+      .setTitle(state.favorite ? '取消收藏' : '收藏')
+      .setIcon(state.favorite ? 'star-off' : 'star')
+      .onClick(() => void this.updateEntryState(entry, 'favorite', !state.favorite)))
+    menu.addItem((item) => item
+      .setTitle(state.read_later ? '移出稍后读' : '加入稍后读')
+      .setIcon(state.read_later ? 'bookmark-x' : 'bookmark')
+      .onClick(() => void this.updateEntryState(entry, 'read-later', !state.read_later)))
+    menu.addSeparator()
+    for (const [readState, label] of [
+      ['unread', '标记为未读'],
+      ['reading', '标记为阅读中'],
+      ['read', '标记为已读'],
+    ] as const) {
+      menu.addItem((item) => item
+        .setTitle(label)
+        .setChecked(state.read_state === readState)
+        .onClick(() => void this.updateEntryState(entry, 'read-state', readState)))
+    }
+    if (this.tags.length) menu.addSeparator()
+    for (const tag of this.tags) {
+      const assigned = state.tags.some((value) => value.id === tag.id)
+      menu.addItem((item) => item
+        .setTitle(`${assigned ? '移除' : '添加'}标签：${tag.name}`)
+        .setIcon('tag')
+        .setChecked(assigned)
+        .onClick(() => void this.updateEntryState(entry, 'tag', { tagId: tag.id, value: !assigned })))
+    }
     menu.showAtPosition({ x, y })
   }
 
-  private async updateReadingMarker(key: ReadingMarkerKey, marked: boolean): Promise<void> {
-    try {
-      await this.plugin.setReadingMarked(key, marked)
-      this.renderVirtualRows()
-      new Notice(marked ? '已标记为当前阅读' : '已取消当前阅读标记')
-    } catch (error) {
-      new Notice(`无法保存阅读标记：${this.errorText(error)}`, 7000)
+  private async updateEntryState(
+    entry: ListEntry,
+    action: 'favorite' | 'read-later' | 'read-state' | 'tag',
+    value: boolean | LibraryReadState | { tagId: number; value: boolean },
+  ): Promise<void> {
+    const resourceId = entry.value.resource_id
+    if (!resourceId || !this.libraryStateWrite) {
+      new Notice('此令牌未启用资料状态同步；请在 OpenRSS 设置中开启。', 7000)
+      return
     }
-  }
-
-  private entryMarkerKey(entry: ListEntry): ReadingMarkerKey {
-    return entry.resource === 'notes'
-      ? noteMarkerKey(entry.value.id)
-      : translationMarkerKey(entry.value.kind, entry.value.id)
+    try {
+      const client = this.plugin.createClient()
+      let state: LibraryResourceState
+      if (action === 'favorite') state = await client.setFavorite(resourceId, Boolean(value))
+      else if (action === 'read-later') state = await client.setReadLater(resourceId, Boolean(value))
+      else if (action === 'read-state') state = await client.setReadState(resourceId, value as LibraryReadState)
+      else {
+        const tag = value as { tagId: number; value: boolean }
+        state = await client.setTag(resourceId, tag.tagId, tag.value)
+      }
+      entry.value.library_state = state
+      this.renderVirtualRows()
+    } catch (error) {
+      new Notice(`无法保存资料状态：${this.errorText(error)}`, 7000)
+    }
   }
 
   private clearLongPress(): void {
@@ -651,8 +764,7 @@ export class OpenRssLibraryView extends ItemView {
     const generation = ++this.detailGeneration
     this.selected = { resource: 'notes', id: noteId }
     this.setMobileListState('select')
-    const latestMode = this.plugin.getLatestReadingPosition(noteMarkerKey(noteId))?.mode
-    this.selectedNoteMode = preferredMode || (this.isNoteViewMode(latestMode) ? latestMode : 'note')
+    this.selectedNoteMode = preferredMode || 'note'
     this.selectedTranslationMode = 'translation-text'
     this.resumeDismissedContext = null
     this.assets.clear()
@@ -678,6 +790,13 @@ export class OpenRssLibraryView extends ItemView {
       } else {
         throw new Error('OpenRSS 返回了无正文的缓存响应')
       }
+      this.currentResourceId = detail.resource_id
+      this.currentContentRevision = detail.content_revision
+      if (detail.resource_id) {
+        this.plugin.hydrateResourceState(detail.resource_id, detail.library_state)
+        const latestMode = this.plugin.getLatestReadingPosition(detail.resource_id)?.mode
+        if (!preferredMode && this.isNoteViewMode(latestMode)) this.selectedNoteMode = latestMode
+      }
       await this.renderNoteDetail(detail, generation)
     } catch (error) {
       if (generation === this.detailGeneration) this.renderDetailError(error)
@@ -693,9 +812,7 @@ export class OpenRssLibraryView extends ItemView {
     const generation = ++this.detailGeneration
     this.selected = { resource: 'translations', id: translationId, kind }
     this.setMobileListState('select')
-    const latestMode = this.plugin.getLatestReadingPosition(translationMarkerKey(kind, translationId))?.mode
-    this.selectedTranslationMode = preferredMode
-      || (this.isTranslationViewMode(latestMode) ? latestMode : 'translation-text')
+    this.selectedTranslationMode = preferredMode || 'translation-text'
     this.resumeDismissedContext = null
     this.assets.clear()
     this.renderVirtualRows()
@@ -721,6 +838,15 @@ export class OpenRssLibraryView extends ItemView {
       } else {
         throw new Error('OpenRSS 返回了无译文的缓存响应')
       }
+      this.currentResourceId = detail.resource_id
+      this.currentContentRevision = detail.content_revision
+      if (detail.resource_id) {
+        this.plugin.hydrateResourceState(detail.resource_id, detail.library_state)
+        const latestMode = this.plugin.getLatestReadingPosition(detail.resource_id)?.mode
+        if (!preferredMode && this.isTranslationViewMode(latestMode)) {
+          this.selectedTranslationMode = latestMode
+        }
+      }
       await this.renderTranslationDetail(detail, generation)
     } catch (error) {
       if (generation === this.detailGeneration) this.renderDetailError(error)
@@ -745,6 +871,9 @@ export class OpenRssLibraryView extends ItemView {
       this.plugin.createClient().openRssWebUrl(`/notes/${detail.note.id}`),
       '在 OpenRSS 打开',
     )
+    if (detail.resource_id && detail.library_state) {
+      this.renderResourceStateActions(heading, detail.resource_id, detail.library_state)
+    }
 
     const tabs = this.detailEl.createDiv({ cls: 'openrss-library__detail-tabs' })
     const choices: Array<[NoteViewMode, string, number | null]> = [
@@ -859,6 +988,9 @@ export class OpenRssLibraryView extends ItemView {
     })
     const links = heading.createDiv({ cls: 'openrss-library__detail-links' })
     this.addExternalLink(links, detail.item.url, '原文')
+    if (detail.resource_id && detail.library_state) {
+      this.renderResourceStateActions(heading, detail.resource_id, detail.library_state)
+    }
 
     if (detail.note_ids.length) {
       const notes = this.detailEl.createDiv({ cls: 'openrss-library__related-notes' })
@@ -932,6 +1064,104 @@ export class OpenRssLibraryView extends ItemView {
       row.createDiv({ cls: 'openrss-library__segment-source', text: segment.src })
       row.createDiv({ cls: 'openrss-library__segment-translation', text: segment.trans })
     }
+  }
+
+  private renderResourceStateActions(
+    parent: HTMLElement,
+    resourceId: number,
+    initialState: LibraryResourceState,
+  ): void {
+    if (this.stateActionsParentEl === parent) this.stateActionsEl?.remove()
+    const actions = parent.createDiv({ cls: 'openrss-library__state-actions' })
+    this.stateActionsParentEl = parent
+    this.stateActionsEl = actions
+    const render = (state: LibraryResourceState) => {
+      actions.empty()
+      const mutate = async (
+        operation: () => Promise<LibraryResourceState>,
+      ) => {
+        if (!this.libraryStateWrite) {
+          new Notice('此令牌未启用资料状态同步；请在 OpenRSS 设置中开启。', 7000)
+          return
+        }
+        for (const control of Array.from(actions.querySelectorAll('button, select'))) {
+          (control as HTMLButtonElement | HTMLSelectElement).disabled = true
+        }
+        try {
+          const next = await operation()
+          for (const entry of this.entries) {
+            if (entry.value.resource_id === resourceId) entry.value.library_state = next
+          }
+          this.plugin.hydrateResourceState(resourceId, next)
+          this.renderVirtualRows()
+          render(next)
+        } catch (error) {
+          new Notice(`无法保存资料状态：${this.errorText(error)}`, 7000)
+          render(state)
+        }
+      }
+      const favorite = actions.createEl('button', {
+        text: state.favorite ? '★ 已收藏' : '☆ 收藏',
+        cls: state.favorite ? 'is-active' : '',
+        attr: { type: 'button' },
+      })
+      favorite.disabled = !this.libraryStateWrite
+      favorite.addEventListener('click', () => void mutate(
+        () => this.plugin.createClient().setFavorite(resourceId, !state.favorite),
+      ))
+      const later = actions.createEl('button', {
+        text: state.read_later ? '✓ 稍后读' : '稍后读',
+        cls: state.read_later ? 'is-active' : '',
+        attr: { type: 'button' },
+      })
+      later.disabled = !this.libraryStateWrite
+      later.addEventListener('click', () => void mutate(
+        () => this.plugin.createClient().setReadLater(resourceId, !state.read_later),
+      ))
+      const readState = actions.createEl('select', { attr: { 'aria-label': '阅读状态' } })
+      for (const [value, label] of [
+        ['unread', '未读'],
+        ['reading', '阅读中'],
+        ['read', '已读'],
+      ] as const) {
+        const option = readState.createEl('option', { value, text: label })
+        option.selected = state.read_state === value
+      }
+      readState.disabled = !this.libraryStateWrite
+      readState.addEventListener('change', () => void mutate(
+        () => this.plugin.createClient().setReadState(
+          resourceId,
+          readState.value as LibraryReadState,
+        ),
+      ))
+      for (const tag of state.tags) {
+        const chip = actions.createEl('button', {
+          text: `#${tag.name} ×`,
+          cls: 'openrss-library__tag-chip',
+          attr: { type: 'button', title: `移除标签 ${tag.name}` },
+        })
+        chip.disabled = !this.libraryStateWrite
+        chip.addEventListener('click', () => void mutate(
+          () => this.plugin.createClient().setTag(resourceId, tag.id, false),
+        ))
+      }
+      const assigned = new Set(state.tags.map((tag) => tag.id))
+      const available = this.tags.filter((tag) => !assigned.has(tag.id))
+      if (available.length) {
+        const addTag = actions.createEl('select', { attr: { 'aria-label': '添加标签' } })
+        addTag.createEl('option', { value: '', text: '添加标签…' })
+        for (const tag of available) addTag.createEl('option', { value: String(tag.id), text: tag.name })
+        addTag.disabled = !this.libraryStateWrite
+        addTag.addEventListener('change', () => {
+          if (!addTag.value) return
+          void mutate(() => this.plugin.createClient().setTag(resourceId, Number(addTag.value), true))
+        })
+      }
+      if (!this.libraryStateWrite) {
+        actions.createSpan({ cls: 'openrss-library__state-readonly', text: '状态同步未授权' })
+      }
+    }
+    render(initialState)
   }
 
   private renderReadingControls(): void {
@@ -1046,7 +1276,7 @@ export class OpenRssLibraryView extends ItemView {
     if (this.suppressProgressTracking) return
     const context = this.currentReadingContext()
     if (!context) return
-    this.resumeDismissedContext = this.readingContextId(context.key, context.mode)
+    this.resumeDismissedContext = this.readingContextId(context.resourceId, context.mode)
     this.readingProgressDirty = true
     this.updateResumeButton()
     this.scheduleReadingProgressSave()
@@ -1091,7 +1321,6 @@ export class OpenRssLibraryView extends ItemView {
         this.detailEl.scrollHeight,
         this.detailEl.clientHeight,
       ),
-      updatedAt: Date.now(),
     }
     this.readingProgressDirty = false
     void this.plugin.setReadingPosition(position).catch((error) => {
@@ -1113,8 +1342,8 @@ export class OpenRssLibraryView extends ItemView {
   private updateResumeButton(): void {
     if (!this.resumeButtonEl) return
     const context = this.currentReadingContext()
-    const contextId = context ? this.readingContextId(context.key, context.mode) : null
-    const saved = context ? this.plugin.getReadingPosition(context.key, context.mode) : null
+    const contextId = context ? this.readingContextId(context.resourceId, context.mode) : null
+    const saved = context ? this.plugin.getReadingPosition(context.resourceId, context.mode) : null
     const visible = Boolean(
       saved
       && saved.progress >= 0.02
@@ -1123,16 +1352,20 @@ export class OpenRssLibraryView extends ItemView {
     )
     this.resumeButtonEl.toggleClass('is-hidden', !visible)
     if (visible && saved) {
-      this.resumeButtonEl.setText(`返回上次位置（${readingProgressPercent(saved.progress)}%）`)
+      const changed = saved.contentRevision === null
+        || saved.contentRevision !== context?.contentRevision
+      this.resumeButtonEl.setText(changed
+        ? `内容已更新，确认返回旧位置（${readingProgressPercent(saved.progress)}%）`
+        : `返回上次位置（${readingProgressPercent(saved.progress)}%）`)
     }
   }
 
   private restoreReadingPosition(): void {
     const context = this.currentReadingContext()
     if (!context) return
-    const saved = this.plugin.getReadingPosition(context.key, context.mode)
+    const saved = this.plugin.getReadingPosition(context.resourceId, context.mode)
     if (!saved) return
-    this.resumeDismissedContext = this.readingContextId(context.key, context.mode)
+    this.resumeDismissedContext = this.readingContextId(context.resourceId, context.mode)
     this.suppressProgressTracking = true
     this.detailEl.scrollTop = scrollTopForProgress(
       saved.progress,
@@ -1144,19 +1377,23 @@ export class OpenRssLibraryView extends ItemView {
     window.requestAnimationFrame(() => { this.suppressProgressTracking = false })
   }
 
-  private currentReadingContext(): { key: ReadingMarkerKey; mode: ReadingViewMode } | null {
-    if (!this.selected) return null
-    if (this.selected.resource === 'notes') {
-      return { key: noteMarkerKey(this.selected.id), mode: this.selectedNoteMode }
-    }
+  private currentReadingContext(): {
+    resourceId: number
+    contentRevision: string | null
+    mode: ReadingViewMode
+  } | null {
+    if (!this.selected || !this.currentResourceId) return null
     return {
-      key: translationMarkerKey(this.selected.kind, this.selected.id),
-      mode: this.selectedTranslationMode,
+      resourceId: this.currentResourceId,
+      contentRevision: this.currentContentRevision,
+      mode: this.selected.resource === 'notes'
+        ? this.selectedNoteMode
+        : this.selectedTranslationMode,
     }
   }
 
-  private readingContextId(key: ReadingMarkerKey, mode: ReadingViewMode): string {
-    return `${key}|${mode}`
+  private readingContextId(resourceId: number, mode: ReadingViewMode): string {
+    return `${resourceId}|${mode}`
   }
 
   private isNoteViewMode(mode: ReadingViewMode | undefined): mode is NoteViewMode {
@@ -1188,6 +1425,10 @@ export class OpenRssLibraryView extends ItemView {
   }
 
   private renderEmptyDetail(): void {
+    this.currentResourceId = null
+    this.currentContentRevision = null
+    this.stateActionsParentEl = null
+    this.stateActionsEl = null
     this.clearMarkdownScope()
     this.resetReadingUiState()
     this.detailEl.empty()
@@ -1197,6 +1438,10 @@ export class OpenRssLibraryView extends ItemView {
   }
 
   private renderLoadingDetail(): void {
+    this.currentResourceId = null
+    this.currentContentRevision = null
+    this.stateActionsParentEl = null
+    this.stateActionsEl = null
     this.clearMarkdownScope()
     this.resetReadingUiState()
     this.detailEl.empty()
@@ -1204,13 +1449,48 @@ export class OpenRssLibraryView extends ItemView {
   }
 
   private renderDetailError(error: unknown): void {
+    this.currentResourceId = null
+    this.currentContentRevision = null
+    this.stateActionsParentEl = null
+    this.stateActionsEl = null
     this.clearMarkdownScope()
     this.resetReadingUiState()
     this.detailEl.empty()
     const box = this.detailEl.createDiv({ cls: 'openrss-library__error' })
     box.createEl('h3', { text: '无法读取 OpenRSS 资料' })
     box.createEl('p', { text: this.errorText(error) })
-    box.createEl('p', { text: '请检查插件设置中的 OpenRSS 地址和只读 Token。' })
+    box.createEl('p', { text: '请检查插件设置中的 OpenRSS 地址和 Token。' })
+  }
+
+  private async pollLibraryChanges(): Promise<void> {
+    try {
+      const page = await this.plugin.createClient().changes(this.changesCursor)
+      this.changesCursor = page.cursor
+      if (page.expired) {
+        this.changesCursor = page.latest_cursor
+        await this.refreshAll()
+        return
+      }
+      if (!page.changes.length) return
+      const selectedResourceChanged = this.currentResourceId != null
+        && page.changes.some((change) => change.resource_id === this.currentResourceId)
+      if (selectedResourceChanged && this.currentResourceId) {
+        const state = await this.plugin.createClient().resourceState(this.currentResourceId)
+        this.plugin.hydrateResourceState(this.currentResourceId, state)
+        for (const entry of this.entries) {
+          if (entry.value.resource_id === this.currentResourceId) entry.value.library_state = state
+        }
+        if (this.stateActionsParentEl) {
+          this.renderResourceStateActions(this.stateActionsParentEl, this.currentResourceId, state)
+        }
+        this.updateResumeButton()
+      }
+      await this.reload(false)
+    } catch (error) {
+      if (!document.hidden) {
+        new Notice(`OpenRSS 状态同步暂时失败：${this.errorText(error)}`, 5000)
+      }
+    }
   }
 
   private async refreshAll(): Promise<void> {
