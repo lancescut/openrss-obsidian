@@ -17,6 +17,7 @@ const source = walk(src)
   .filter((path) => extname(path) === '.ts')
   .map((path) => readFileSync(path, 'utf8'))
   .join('\n')
+const styles = readFileSync(resolve(root, 'styles.css'), 'utf8')
 
 const forbidden = [
   ['Vault file API', /\bapp\.vault\b|\bthis\.app\.vault\b|Vault\.create|Vault\.modify/],
@@ -91,6 +92,26 @@ const { nonJsonResponseMessage } = await importTypeScript(resolve(src, 'api', 'r
 const htmlResponseMessage = nonJsonResponseMessage(200, 'text/html; charset=utf-8', '<!doctype html>')
 if (!htmlResponseMessage.includes('非 JSON') || !htmlResponseMessage.includes('当前响应看起来是网页')) {
   throw new Error('Non-JSON response guidance failed')
+}
+
+const { nextMobileDrawerOpen } = await importTypeScript(resolve(src, 'mobile-drawer.ts'))
+if (
+  nextMobileDrawerOpen(true, 'toggle') !== false
+  || nextMobileDrawerOpen(false, 'toggle') !== true
+  || nextMobileDrawerOpen(false, 'open') !== true
+  || nextMobileDrawerOpen(true, 'close') !== false
+  || nextMobileDrawerOpen(true, 'select') !== false
+) {
+  throw new Error('Mobile drawer state transitions failed')
+}
+if (
+  (source.match(/setMobileListState\('select'\)/g) || []).length < 2
+  || !source.includes("this.mobileListBackdropEl.setAttribute('aria-hidden', String(!this.mobileListOpen))")
+  || !styles.includes('.openrss-library__body.is-mobile-list-open .openrss-library__list-pane')
+  || !styles.includes('.openrss-library__mobile-list-backdrop')
+  || styles.includes('grid-template-rows: minmax(180px, 32%)')
+) {
+  throw new Error('Mobile drawer layout contract failed')
 }
 if (normalizeBaseUrl('https://rss.example.com/') !== 'https://rss.example.com') {
   throw new Error('HTTPS URL normalization failed')
