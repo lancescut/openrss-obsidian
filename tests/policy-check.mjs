@@ -18,6 +18,7 @@ const source = walk(src)
   .map((path) => readFileSync(path, 'utf8'))
   .join('\n')
 const styles = readFileSync(resolve(root, 'styles.css'), 'utf8')
+const libraryView = readFileSync(resolve(root, 'src', 'views', 'library-view.ts'), 'utf8')
 
 const forbidden = [
   ['Vault file API', /\bapp\.vault\b|\bthis\.app\.vault\b|Vault\.create|Vault\.modify/],
@@ -119,6 +120,21 @@ if (
   || !source.includes("facets: { subscriptions: SubscriptionFacet[] }")
 ) {
   throw new Error('Translation subscription filter contract failed')
+}
+if (
+  !libraryView.includes("const READ_STATES: readonly LibraryReadState[] = ['unread', 'reading', 'read']")
+  || !libraryView.includes("['desc', '最新在前']")
+  || !libraryView.includes("['asc', '最早在前']")
+  || !source.includes("read_states: params.readStates?.join(',')")
+  || (source.match(/sort_order: params\.sortOrder/g) || []).length < 2
+  || !styles.includes('.openrss-library__row.is-read')
+  || !libraryView.includes('private applyServerResourceState(')
+  || (libraryView.match(/this\.applyServerResourceState\(/g) || []).length < 6
+  || !libraryView.includes('private renderBottomNavigation()')
+  || !libraryView.includes("text: '下一篇 →'")
+  || !styles.includes('.openrss-library__bottom-navigation')
+) {
+  throw new Error('Read-state filtering, time sorting or read-row styling contract failed')
 }
 const { extractMermaidBlocks } = await importTypeScript(resolve(src, 'render', 'mermaid-blocks.ts'))
 const preparedMermaid = extractMermaidBlocks([

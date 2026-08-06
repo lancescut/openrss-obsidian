@@ -23,6 +23,7 @@ export type Capabilities = {
 }
 
 export type LibraryReadState = 'unread' | 'reading' | 'read'
+export type LibrarySortOrder = 'desc' | 'asc'
 
 export type LibraryTag = {
   id: number
