@@ -5,6 +5,7 @@ import type {
   ConditionalResult,
   Envelope,
   LibraryReadState,
+  LibrarySortOrder,
   LibraryReadingPosition,
   LibraryResourceState,
   LibraryStateChangePage,
@@ -60,8 +61,9 @@ export class OpenRssClient {
     subscriptionId?: number | null
     favorite?: boolean | null
     readLater?: boolean | null
-    readState?: LibraryReadState | null
+    readStates?: readonly LibraryReadState[] | null
     tagId?: number | null
+    sortOrder?: LibrarySortOrder
   }): Promise<NoteListPage> {
     return this.get('/api/v1/integrations/obsidian/notes', {
       cursor: params.cursor,
@@ -72,8 +74,9 @@ export class OpenRssClient {
       subscription_id: params.subscriptionId,
       favorite: params.favorite,
       read_later: params.readLater,
-      read_state: params.readState,
+      read_states: params.readStates?.join(','),
       tag_id: params.tagId,
+      sort_order: params.sortOrder,
     })
   }
 
@@ -90,8 +93,9 @@ export class OpenRssClient {
     subscriptionId?: number | null
     favorite?: boolean | null
     readLater?: boolean | null
-    readState?: LibraryReadState | null
+    readStates?: readonly LibraryReadState[] | null
     tagId?: number | null
+    sortOrder?: LibrarySortOrder
   }): Promise<TranslationListPage> {
     return this.get('/api/v1/integrations/obsidian/translations', {
       kind: params.kind,
@@ -102,8 +106,9 @@ export class OpenRssClient {
       subscription_id: params.subscriptionId,
       favorite: params.favorite,
       read_later: params.readLater,
-      read_state: params.readState,
+      read_states: params.readStates?.join(','),
       tag_id: params.tagId,
+      sort_order: params.sortOrder,
     })
   }
 

@@ -8,6 +8,7 @@ import type {
   NoteListPage,
   LibraryReadState,
   LibraryResourceState,
+  LibrarySortOrder,
   LibraryTag,
   SubscriptionFacet,
   TranslationDetail,
@@ -40,6 +41,7 @@ const DETAIL_CACHE_BYTES = 20 * 1024 * 1024
 const MIN_LIST_PANE_WIDTH = 28
 const MIN_DETAIL_PANE_WIDTH = 260
 const SPLITTER_WIDTH = 10
+const READ_STATES: readonly LibraryReadState[] = ['unread', 'reading', 'read']
 type Resource = 'notes' | 'translations'
 type NoteViewMode = 'note'
 type TranslationViewMode = 'translation-text' | 'translation-segments'
@@ -65,7 +67,8 @@ export class OpenRssLibraryView extends ItemView {
   private targetLang = ''
   private favoriteOnly = false
   private readLaterOnly = false
-  private readState: LibraryReadState | null = null
+  private readStates = new Set<LibraryReadState>(READ_STATES)
+  private sortOrder: LibrarySortOrder = 'desc'
   private tagId: number | null = null
   private tags: LibraryTag[] = []
   private libraryStateWrite = false
@@ -116,6 +119,9 @@ export class OpenRssLibraryView extends ItemView {
   private mobileListBackdropEl!: HTMLButtonElement
   private previousButtonEl: HTMLButtonElement | null = null
   private nextButtonEl: HTMLButtonElement | null = null
+  private bottomPreviousButtonEl: HTMLButtonElement | null = null
+  private bottomNextButtonEl: HTMLButtonElement | null = null
+  private bottomNavigationEl: HTMLElement | null = null
   private progressFillEl: HTMLElement | null = null
   private progressTextEl: HTMLElement | null = null
   private progressTrackEl: HTMLElement | null = null
@@ -142,6 +148,9 @@ export class OpenRssLibraryView extends ItemView {
   async onOpen(): Promise<void> {
     this.renderShell()
     this.registerDomEvent(document, 'keydown', (event) => this.handleReadingShortcut(event))
+    this.registerDomEvent(document, 'visibilitychange', () => {
+      if (!document.hidden) void this.pollLibraryChanges()
+    })
     this.registerInterval(window.setInterval(() => {
       if (!document.hidden) void this.pollLibraryChanges()
     }, 45_000))
@@ -356,15 +365,14 @@ export class OpenRssLibraryView extends ItemView {
         void this.reload(true)
       })
     }
-    this.addSelect(this.filtersEl, '阅读状态', this.readState || '', [
-      ['', '全部阅读状态'],
-      ['unread', '未读'],
-      ['reading', '阅读中'],
-      ['read', '已读'],
+    this.addSelect(this.filtersEl, '更新时间排序', this.sortOrder, [
+      ['desc', '最新在前'],
+      ['asc', '最早在前'],
     ], (value) => {
-      this.readState = value ? value as LibraryReadState : null
+      this.sortOrder = value as LibrarySortOrder
       void this.reload(true)
     })
+    this.addReadStateFilters()
     const tagOptions: Array<[string, string]> = [['', '全部标签']]
     for (const tag of this.tags) tagOptions.push([String(tag.id), tag.name])
     this.addSelect(this.filtersEl, '标签', this.tagId ? String(this.tagId) : '', tagOptions, (value) => {
@@ -387,6 +395,37 @@ export class OpenRssLibraryView extends ItemView {
     input.checked = checked
     wrapper.createSpan({ text: label })
     input.addEventListener('change', () => onChange(input.checked))
+  }
+
+  private addReadStateFilters(): void {
+    const group = this.filtersEl.createDiv({
+      cls: 'openrss-library__read-state-filters',
+      attr: {
+        role: 'group',
+        'aria-label': '筛选阅读状态；状态只会由手动标记改变',
+        title: '打开或滚动资料不会自动改变阅读状态',
+      },
+    })
+    group.createSpan({ cls: 'openrss-library__filter-label', text: '阅读（手动）' })
+    for (const [state, label] of [
+      ['unread', '未读'],
+      ['reading', '阅读中'],
+      ['read', '已读'],
+    ] as const) {
+      const wrapper = group.createEl('label', { cls: 'openrss-library__read-state-toggle' })
+      const input = wrapper.createEl('input', { attr: { type: 'checkbox' } })
+      input.checked = this.readStates.has(state)
+      wrapper.createSpan({ text: label })
+      input.addEventListener('change', () => {
+        if (input.checked) this.readStates.add(state)
+        else this.readStates.delete(state)
+        void this.reload(true)
+      })
+    }
+  }
+
+  private selectedReadStates(): LibraryReadState[] {
+    return READ_STATES.filter((state) => this.readStates.has(state))
   }
 
   private addSelect(
@@ -485,10 +524,22 @@ export class OpenRssLibraryView extends ItemView {
     this.nextCursor = null
     this.loadingList = true
     if (showLoading) {
+      this.scrollEl.scrollTop = 0
       this.entries = []
       this.statsEl.setText('加载中…')
       this.renderVirtualRows()
     }
+    const selectedReadStates = this.selectedReadStates()
+    if (!selectedReadStates.length) {
+      this.entries = []
+      this.total = 0
+      this.statsEl.setText('请选择至少一种阅读状态')
+      this.loadingList = false
+      this.renderVirtualRows()
+      this.updateNavigationButtons()
+      return
+    }
+    const readStates = selectedReadStates.length === READ_STATES.length ? null : selectedReadStates
     try {
       const page = this.resource === 'notes'
         ? await this.plugin.createClient().notes({
@@ -499,8 +550,9 @@ export class OpenRssLibraryView extends ItemView {
           subscriptionId: this.noteSubscriptionId,
           favorite: this.favoriteOnly || null,
           readLater: this.readLaterOnly || null,
-          readState: this.readState,
+          readStates,
           tagId: this.tagId,
+          sortOrder: this.sortOrder,
         })
         : await this.plugin.createClient().translations({
           kind: this.translationKind,
@@ -510,8 +562,9 @@ export class OpenRssLibraryView extends ItemView {
           subscriptionId: this.translationSubscriptionId,
           favorite: this.favoriteOnly || null,
           readLater: this.readLaterOnly || null,
-          readState: this.readState,
+          readStates,
           tagId: this.tagId,
+          sortOrder: this.sortOrder,
         })
       if (generation !== this.listGeneration) return
       if (this.resource === 'notes') {
@@ -522,6 +575,14 @@ export class OpenRssLibraryView extends ItemView {
       this.entries = page.items.map((value) => this.resource === 'notes'
         ? { resource: 'notes' as const, value: value as NoteListItem }
         : { resource: 'translations' as const, value: value as TranslationListItem })
+      if (this.currentResourceId) {
+        const currentEntry = this.entries.find(
+          (entry) => entry.value.resource_id === this.currentResourceId,
+        )
+        if (currentEntry?.value.library_state) {
+          this.applyServerResourceState(this.currentResourceId, currentEntry.value.library_state)
+        }
+      }
       this.nextCursor = page.next_cursor
       this.total = page.total
       this.statsEl.setText(`${this.total.toLocaleString()} 条 · 当前加载 ${this.entries.length.toLocaleString()} 条`)
@@ -543,6 +604,9 @@ export class OpenRssLibraryView extends ItemView {
     if (this.loadingList || this.loadingMore || !this.nextCursor) return
     const generation = this.listGeneration
     const cursor = this.nextCursor
+    const selectedReadStates = this.selectedReadStates()
+    if (!selectedReadStates.length) return
+    const readStates = selectedReadStates.length === READ_STATES.length ? null : selectedReadStates
     this.loadingMore = true
     try {
       const page = this.resource === 'notes'
@@ -555,8 +619,9 @@ export class OpenRssLibraryView extends ItemView {
           subscriptionId: this.noteSubscriptionId,
           favorite: this.favoriteOnly || null,
           readLater: this.readLaterOnly || null,
-          readState: this.readState,
+          readStates,
           tagId: this.tagId,
+          sortOrder: this.sortOrder,
         })
         : await this.plugin.createClient().translations({
           kind: this.translationKind,
@@ -567,8 +632,9 @@ export class OpenRssLibraryView extends ItemView {
           subscriptionId: this.translationSubscriptionId,
           favorite: this.favoriteOnly || null,
           readLater: this.readLaterOnly || null,
-          readState: this.readState,
+          readStates,
           tagId: this.tagId,
+          sortOrder: this.sortOrder,
         })
       if (generation !== this.listGeneration) return
       const additions: ListEntry[] = page.items.map((value) => this.resource === 'notes'
@@ -604,16 +670,19 @@ export class OpenRssLibraryView extends ItemView {
     for (let index = first; index < last; index += 1) {
       const entry = this.entries[index]
       const state = entry.value.library_state
-      const marked = state?.read_state === 'reading'
+      const readState = state?.read_state || 'unread'
+      const marked = readState === 'reading'
+      const read = readState === 'read'
       const row = this.virtualEl.createEl('button', {
         cls: [
           'openrss-library__row',
           this.isSelected(entry) ? 'is-selected' : '',
           marked ? 'is-reading-marked' : '',
+          read ? 'is-read' : '',
         ].filter(Boolean).join(' '),
         attr: {
           type: 'button',
-          'aria-label': `${entry.resource === 'notes' ? entry.value.title : entry.value.item.title}${marked ? '，当前阅读' : ''}`,
+          'aria-label': `${entry.resource === 'notes' ? entry.value.title : entry.value.item.title}，${readState === 'unread' ? '未读' : readState === 'reading' ? '阅读中' : '已读'}`,
         },
       })
       row.style.top = `${index * ROW_HEIGHT}px`
@@ -621,7 +690,7 @@ export class OpenRssLibraryView extends ItemView {
       const titleRow = row.createDiv({ cls: 'openrss-library__row-title-line' })
       titleRow.createDiv({ cls: 'openrss-library__row-title', text: title })
       if (marked) titleRow.createSpan({ cls: 'openrss-library__reading-badge', text: '在读' })
-      if (state?.read_state === 'read') titleRow.createSpan({ cls: 'openrss-library__reading-badge', text: '已读' })
+      if (read) titleRow.createSpan({ cls: 'openrss-library__reading-badge is-read', text: '已读' })
       if (state?.favorite) titleRow.createSpan({ cls: 'openrss-library__state-badge', text: '★' })
       if (state?.read_later) titleRow.createSpan({ cls: 'openrss-library__state-badge', text: '稍后读' })
       const meta = entry.resource === 'notes'
@@ -738,8 +807,12 @@ export class OpenRssLibraryView extends ItemView {
         const tag = value as { tagId: number; value: boolean }
         state = await client.setTag(resourceId, tag.tagId, tag.value)
       }
-      entry.value.library_state = state
-      this.renderVirtualRows()
+      this.applyServerResourceState(resourceId, state)
+      if (action === 'read-state' && this.readStates.size < READ_STATES.length) {
+        await this.reload(false)
+      } else {
+        this.renderVirtualRows()
+      }
     } catch (error) {
       new Notice(`无法保存资料状态：${this.errorText(error)}`, 7000)
     }
@@ -796,7 +869,9 @@ export class OpenRssLibraryView extends ItemView {
       this.currentResourceId = detail.resource_id
       this.currentContentRevision = detail.content_revision
       if (detail.resource_id) {
-        this.plugin.hydrateResourceState(detail.resource_id, detail.library_state)
+        if (detail.library_state) {
+          this.applyServerResourceState(detail.resource_id, detail.library_state)
+        }
         const latestMode = this.plugin.getLatestReadingPosition(detail.resource_id)?.mode
         if (!preferredMode && this.isNoteViewMode(latestMode)) this.selectedNoteMode = latestMode
       }
@@ -844,7 +919,9 @@ export class OpenRssLibraryView extends ItemView {
       this.currentResourceId = detail.resource_id
       this.currentContentRevision = detail.content_revision
       if (detail.resource_id) {
-        this.plugin.hydrateResourceState(detail.resource_id, detail.library_state)
+        if (detail.library_state) {
+          this.applyServerResourceState(detail.resource_id, detail.library_state)
+        }
         const latestMode = this.plugin.getLatestReadingPosition(detail.resource_id)?.mode
         if (!preferredMode && this.isTranslationViewMode(latestMode)) {
           this.selectedTranslationMode = latestMode
@@ -1051,12 +1128,13 @@ export class OpenRssLibraryView extends ItemView {
         }
         try {
           const next = await operation()
-          for (const entry of this.entries) {
-            if (entry.value.resource_id === resourceId) entry.value.library_state = next
+          const readStateChanged = state.read_state !== next.read_state
+          this.applyServerResourceState(resourceId, next)
+          if (readStateChanged && this.readStates.size < READ_STATES.length) {
+            await this.reload(false)
+          } else {
+            this.renderVirtualRows()
           }
-          this.plugin.hydrateResourceState(resourceId, next)
-          this.renderVirtualRows()
-          render(next)
         } catch (error) {
           new Notice(`无法保存资料状态：${this.errorText(error)}`, 7000)
           render(state)
@@ -1080,7 +1158,12 @@ export class OpenRssLibraryView extends ItemView {
       later.addEventListener('click', () => void mutate(
         () => this.plugin.createClient().setReadLater(resourceId, !state.read_later),
       ))
-      const readState = actions.createEl('select', { attr: { 'aria-label': '阅读状态' } })
+      const readState = actions.createEl('select', {
+        attr: {
+          'aria-label': '阅读状态（同步到 OpenRSS）',
+          title: '手动修改后同步到 OpenRSS；插件始终采用服务端返回状态',
+        },
+      })
       for (const [value, label] of [
         ['unread', '未读'],
         ['reading', '阅读中'],
@@ -1182,10 +1265,15 @@ export class OpenRssLibraryView extends ItemView {
   }
 
   private updateNavigationButtons(): void {
-    if (!this.previousButtonEl || !this.nextButtonEl) return
     const index = this.selectedEntryIndex()
-    this.previousButtonEl.disabled = index <= 0
-    this.nextButtonEl.disabled = index < 0 || (index >= this.entries.length - 1 && !this.nextCursor)
+    const previousDisabled = index <= 0
+    const nextDisabled = index < 0 || (index >= this.entries.length - 1 && !this.nextCursor)
+    for (const button of [this.previousButtonEl, this.bottomPreviousButtonEl]) {
+      if (button) button.disabled = previousDisabled
+    }
+    for (const button of [this.nextButtonEl, this.bottomNextButtonEl]) {
+      if (button) button.disabled = nextDisabled
+    }
   }
 
   private handleReadingShortcut(event: KeyboardEvent): void {
@@ -1249,6 +1337,7 @@ export class OpenRssLibraryView extends ItemView {
     this.suppressProgressTracking = true
     this.readingContentReady = false
     this.readingProgressDirty = false
+    this.renderBottomNavigation()
     this.detailEl.scrollTop = 0
     this.applyReadingAppearance()
     this.readingContentReady = true
@@ -1260,6 +1349,31 @@ export class OpenRssLibraryView extends ItemView {
       this.updateReadingProgressUi()
       this.updateResumeButton()
     })
+  }
+
+  private renderBottomNavigation(): void {
+    this.bottomNavigationEl?.remove()
+    const footer = this.detailEl.createDiv({ cls: 'openrss-library__bottom-navigation' })
+    this.bottomNavigationEl = footer
+    const prompt = footer.createDiv({ cls: 'openrss-library__bottom-navigation-prompt' })
+    prompt.createDiv({ cls: 'openrss-library__bottom-navigation-title', text: '读到这里了' })
+    prompt.createDiv({
+      cls: 'openrss-library__bottom-navigation-hint',
+      text: '继续阅读列表中的上一篇或下一篇',
+    })
+    const navigation = footer.createDiv({ cls: 'openrss-library__bottom-navigation-actions' })
+    this.bottomPreviousButtonEl = navigation.createEl('button', {
+      text: '← 上一篇',
+      attr: { type: 'button', 'aria-label': '上一篇（K）', title: '上一篇（K）' },
+    })
+    this.bottomPreviousButtonEl.addEventListener('click', () => void this.moveSelection(-1))
+    this.bottomNextButtonEl = navigation.createEl('button', {
+      cls: 'mod-cta',
+      text: '下一篇 →',
+      attr: { type: 'button', 'aria-label': '下一篇（J）', title: '下一篇（J）' },
+    })
+    this.bottomNextButtonEl.addEventListener('click', () => void this.moveSelection(1))
+    this.updateNavigationButtons()
   }
 
   private scheduleReadingProgressSave(): void {
@@ -1372,6 +1486,9 @@ export class OpenRssLibraryView extends ItemView {
     this.suppressProgressTracking = false
     this.previousButtonEl = null
     this.nextButtonEl = null
+    this.bottomPreviousButtonEl = null
+    this.bottomNextButtonEl = null
+    this.bottomNavigationEl = null
     this.progressFillEl = null
     this.progressTextEl = null
     this.progressTrackEl = null
@@ -1438,14 +1555,7 @@ export class OpenRssLibraryView extends ItemView {
         && page.changes.some((change) => change.resource_id === this.currentResourceId)
       if (selectedResourceChanged && this.currentResourceId) {
         const state = await this.plugin.createClient().resourceState(this.currentResourceId)
-        this.plugin.hydrateResourceState(this.currentResourceId, state)
-        for (const entry of this.entries) {
-          if (entry.value.resource_id === this.currentResourceId) entry.value.library_state = state
-        }
-        if (this.stateActionsParentEl) {
-          this.renderResourceStateActions(this.stateActionsParentEl, this.currentResourceId, state)
-        }
-        this.updateResumeButton()
+        this.applyServerResourceState(this.currentResourceId, state)
       }
       await this.reload(false)
     } catch (error) {
@@ -1453,6 +1563,25 @@ export class OpenRssLibraryView extends ItemView {
         new Notice(`OpenRSS 状态同步暂时失败：${this.errorText(error)}`, 5000)
       }
     }
+  }
+
+  private applyServerResourceState(resourceId: number, state: LibraryResourceState): void {
+    for (const entry of this.entries) {
+      if (entry.value.resource_id === resourceId) entry.value.library_state = state
+    }
+    this.plugin.hydrateResourceState(resourceId, state)
+    if (this.currentResourceId !== resourceId) return
+    if (this.selected?.resource === 'notes') {
+      const cached = this.cache.get(`note:${this.selected.id}`)
+      if (cached?.type === 'note') cached.data.library_state = state
+    } else if (this.selected?.resource === 'translations') {
+      const cached = this.cache.get(`translation:${this.selected.kind}:${this.selected.id}`)
+      if (cached?.type === 'translation') cached.data.library_state = state
+    }
+    if (this.stateActionsParentEl) {
+      this.renderResourceStateActions(this.stateActionsParentEl, resourceId, state)
+    }
+    this.updateResumeButton()
   }
 
   private async refreshAll(): Promise<void> {
